@@ -1,4 +1,4 @@
-# Manage Kubernetes in Google Cloud: Challenge Lab
+# Analyze Images with the Cloud Vision API: Challenge Lab
 
 > ⚡ **Automated Speedrun Solution for Google Cloud Skills Boost**
 
@@ -9,7 +9,7 @@
 > **Please Read Carefully Before Running the Script:**
 >
 > 1. **Educational Purpose Only:** This script and repository are created strictly for **educational and demonstration purposes**.
-> 2. **Understand the Concepts:** It is highly recommended to read through the lab instructions first and understand what **Kubernetes in Google Cloud** actually do behind the scenes.
+> 2. **Understand the Concepts:** It is highly recommended to read through the lab instructions first and understand what actually do behind the scenes.
 > 3. **Fair Usage:** Use this script to speed up your workflow or troubleshoot errors, but make sure to learn the underlying Google Cloud concepts.
 
 ---
