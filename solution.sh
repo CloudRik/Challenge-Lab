@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# Qwiklabs Fully Automated Robust Script
-# Interactive Input + Zone-Independent Auto Cluster Detection
+# Dynamic & Safe Challenge Lab Solver by CloudRik
+# Fully Automatic Cluster & Zone Detection with Fail-Safe Checks
 # ==============================================================================
 
 set -e
@@ -12,37 +12,42 @@ echo "🚀 WELCOME TO AUTOMATED CHALLENGE LAB SOLVER BY CLOUDRIK"
 echo "=================================================================="
 echo ""
 
-# Direct Terminal Input
+# 1. Take Service Name input via /dev/tty
 read -p "📌 Enter Task 6 Service Name (e.g., helloweb-service-zp3a): " SERVICE_NAME < /dev/tty
 echo ""
 
 if [ -z "$SERVICE_NAME" ]; then
-    echo "❌ Error: Service Name missing! Exiting to protect credits."
+    echo "❌ ERROR: Service Name blank nahi ho sakta! Exiting to protect credits."
     exit 1
 fi
 
-echo "✅ Service Name : $SERVICE_NAME"
-echo "⏳ Detecting GKE Environment..."
-echo "=================================================================="
+echo "⏳ Auto-detecting Cluster Details..."
 
-# 1. BULLETPROOF ENVIRONMENT AUTO-DETECTION
+# 2. Dynamic Auto-Detection of Cluster & Zone
 export PROJECT_ID=$(gcloud config get-value project)
+export CLUSTER_NAME=$(gcloud container clusters list --format="value(name)" 2>/dev/null | head -n 1)
+export ZONE=$(gcloud container clusters list --format="value(zone)" 2>/dev/null | head -n 1)
 
-# Extract Cluster Name and Zone dynamically without zone restriction
-export CLUSTER_NAME=$(gcloud container clusters list --format="value(name)" | head -n 1)
-export ZONE=$(gcloud container clusters list --format="value(zone)" | head -n 1)
+# Fail-safe check to prevent script execution if cluster is missing
+if [ -z "$CLUSTER_NAME" ] || [ -z "$ZONE" ]; then
+    echo "=================================================================="
+    echo "❌ ERROR: GKE Cluster abhi ready nahi hai ya initialize ho raha hai."
+    echo "⚠️ Script pehle hi rok di gayi hai taaki credits waste na ho."
+    echo "👉 1-2 minute wait karke terminal mein command fir se chalayein."
+    echo "=================================================================="
+    exit 1
+fi
+
 export REGION=$(echo $ZONE | cut -d'-' -f1,2)
 
-if [ -z "$CLUSTER_NAME" ] || [ -z "$ZONE" ]; then
-    echo "❌ Error: GKE Cluster is still provisioning or not found! Wait 30 seconds and try again."
-    exit 1
-fi
+echo "✅ Project ID   : $PROJECT_ID"
+echo "✅ Cluster Name : $CLUSTER_NAME"
+echo "✅ Zone         : $ZONE"
+echo "✅ Region       : $REGION"
+echo "✅ Service Name : $SERVICE_NAME"
+echo "=================================================================="
 
-echo "✅ Project ID : $PROJECT_ID"
-echo "✅ Cluster    : $CLUSTER_NAME"
-echo "✅ Zone       : $ZONE"
-echo "✅ Region     : $REGION"
-
+# 3. Connect to GKE Cluster
 echo "⏳ Connecting to GKE Cluster..."
 gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
 
@@ -52,10 +57,10 @@ if [ -z "$NAMESPACE_NAME" ]; then
     export NAMESPACE_NAME=$(kubectl get ns --no-headers -o custom-columns=":metadata.name" | grep "gmp" | head -n 1)
 fi
 
-echo "✅ Namespace  : $NAMESPACE_NAME"
+echo "✅ Namespace    : $NAMESPACE_NAME"
 
 # TASK 1 & 2: Managed Prometheus
-echo "📦 Task 1 & 2: Deploying Prometheus Test App..."
+echo "📦 Deploying Task 1 & 2..."
 cat <<EOF > prometheus-app.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -82,7 +87,7 @@ EOF
 kubectl apply -f prometheus-app.yaml -n $NAMESPACE_NAME
 
 # TASK 3 & 4: Log Metric & Alert Policy
-echo "📦 Task 3 & 4: Setting up Log Metric & Alerting Policy..."
+echo "📦 Setting up Task 3 & 4..."
 gcloud storage cp -r gs://spls/gsp510/hello-app/ .
 
 kubectl apply -f hello-app/manifests/helloweb-deployment.yaml -n $NAMESPACE_NAME || true
@@ -127,14 +132,14 @@ EOF
 gcloud alpha monitoring policies create --policy-from-file="alert-policy.json" || true
 
 # TASK 5: Re-deploy App
-echo "📦 Task 5: Updating image tag & re-deploying..."
+echo "📦 Executing Task 5..."
 kubectl delete deployment helloweb -n $NAMESPACE_NAME --ignore-not-found
 
 sed -i 's|<todo>|us-docker.pkg.dev/google-samples/containers/gke/hello-app:1.0|g' hello-app/manifests/helloweb-deployment.yaml
 kubectl apply -f hello-app/manifests/helloweb-deployment.yaml -n $NAMESPACE_NAME
 
 # TASK 6: Build v2 Container & Expose Service
-echo "📦 Task 6: Updating code, pushing v2 image & exposing service..."
+echo "📦 Executing Task 6..."
 sed -i 's/Version: 1.0.0/Version: 2.0.0/g' hello-app/main.go
 
 gcloud artifacts repositories create demo-repo \
@@ -155,5 +160,5 @@ kubectl expose deployment helloweb \
     -n $NAMESPACE_NAME || true
 
 echo "=================================================================="
-echo "🎉 SUCCESS! ALL TASKS COMPLETED. Click Check My Progress Buttons!"
+echo "🎉 LAB COMPLETED SUCCESSFULLY! Check your progress on Qwiklabs."
 echo "=================================================================="
