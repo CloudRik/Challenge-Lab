@@ -1,37 +1,47 @@
 #!/bin/bash
 # ==============================================================================
-# Qwiklabs Interactive One-Liner Script
-# Takes keyboard input safely via /dev/tty even with curl pipe!
+# Qwiklabs Fully Automated Robust Script
+# Interactive Input + Zone-Independent Auto Cluster Detection
 # ==============================================================================
 
 set -e
 
-# Screen clean karke user se input mangenge
 clear
 echo "=================================================================="
 echo "🚀 WELCOME TO AUTOMATED CHALLENGE LAB SOLVER BY CLOUDRIK"
 echo "=================================================================="
 echo ""
 
-# /dev/tty ka use karke keyboard input read karenge
-read -p "📌 Enter Task 6 Service Name (e.g., helloweb-service-9xuc): " SERVICE_NAME < /dev/tty
-read -p "📌 Enter Lab Zone (e.g., us-west1-b): " ZONE < /dev/tty
+# Direct Terminal Input
+read -p "📌 Enter Task 6 Service Name (e.g., helloweb-service-zp3a): " SERVICE_NAME < /dev/tty
 echo ""
 
-if [ -z "$SERVICE_NAME" ] || [ -z "$ZONE" ]; then
-    echo "❌ Error: Inputs missing! Exiting script to protect your credits."
+if [ -z "$SERVICE_NAME" ]; then
+    echo "❌ Error: Service Name missing! Exiting to protect credits."
     exit 1
 fi
 
 echo "✅ Service Name : $SERVICE_NAME"
-echo "✅ Zone         : $ZONE"
-echo "⏳ Starting lab setup..."
+echo "⏳ Detecting GKE Environment..."
 echo "=================================================================="
 
-# 1. ENVIRONMENT SETUP
+# 1. BULLETPROOF ENVIRONMENT AUTO-DETECTION
 export PROJECT_ID=$(gcloud config get-value project)
-export CLUSTER_NAME=$(gcloud container clusters list --zone=$ZONE --format="value(name)" | head -n 1)
+
+# Extract Cluster Name and Zone dynamically without zone restriction
+export CLUSTER_NAME=$(gcloud container clusters list --format="value(name)" | head -n 1)
+export ZONE=$(gcloud container clusters list --format="value(zone)" | head -n 1)
 export REGION=$(echo $ZONE | cut -d'-' -f1,2)
+
+if [ -z "$CLUSTER_NAME" ] || [ -z "$ZONE" ]; then
+    echo "❌ Error: GKE Cluster is still provisioning or not found! Wait 30 seconds and try again."
+    exit 1
+fi
+
+echo "✅ Project ID : $PROJECT_ID"
+echo "✅ Cluster    : $CLUSTER_NAME"
+echo "✅ Zone       : $ZONE"
+echo "✅ Region     : $REGION"
 
 echo "⏳ Connecting to GKE Cluster..."
 gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
@@ -42,9 +52,6 @@ if [ -z "$NAMESPACE_NAME" ]; then
     export NAMESPACE_NAME=$(kubectl get ns --no-headers -o custom-columns=":metadata.name" | grep "gmp" | head -n 1)
 fi
 
-echo "✅ Project ID : $PROJECT_ID"
-echo "✅ Cluster    : $CLUSTER_NAME"
-echo "✅ Region     : $REGION"
 echo "✅ Namespace  : $NAMESPACE_NAME"
 
 # TASK 1 & 2: Managed Prometheus
