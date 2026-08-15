@@ -19,4 +19,4 @@
 Open **Google Cloud Shell** in your active lab session and run the following command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/solution.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/solution.sh?nocache=$(date +%s)" | bash
