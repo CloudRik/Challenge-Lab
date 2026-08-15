@@ -1,27 +1,39 @@
 #!/bin/bash
-# Dynamic & Non-blocking Script
+# ==============================================================================
+# Qwiklabs Interactive One-Liner Script
+# Takes keyboard input safely via /dev/tty even with curl pipe!
+# ==============================================================================
+
 set -e
 
-# Accept parameters from command line directly!
-export SERVICE_NAME=$1
-export ZONE=$2
+# Screen clean karke user se input mangenge
+clear
+echo "=================================================================="
+echo "🚀 WELCOME TO AUTOMATED CHALLENGE LAB SOLVER BY CLOUDRIK"
+echo "=================================================================="
+echo ""
+
+# /dev/tty ka use karke keyboard input read karenge
+read -p "📌 Enter Task 6 Service Name (e.g., helloweb-service-9xuc): " SERVICE_NAME < /dev/tty
+read -p "📌 Enter Lab Zone (e.g., us-west1-b): " ZONE < /dev/tty
+echo ""
 
 if [ -z "$SERVICE_NAME" ] || [ -z "$ZONE" ]; then
-    echo "❌ Error: Inputs missing!"
-    echo "👉 Usage: curl -fsSL <URL> | bash -s <SERVICE_NAME> <ZONE>"
-    echo "👉 Example: curl -fsSL <URL> | bash -s helloweb-service-9xuc us-west1-b"
+    echo "❌ Error: Inputs missing! Exiting script to protect your credits."
     exit 1
 fi
 
-echo "🚀 Starting Automated Challenge Lab Script..."
+echo "✅ Service Name : $SERVICE_NAME"
+echo "✅ Zone         : $ZONE"
+echo "⏳ Starting lab setup..."
+echo "=================================================================="
 
-# 1. AUTO-DETECT ENVIRONMENT VARIABLES
+# 1. ENVIRONMENT SETUP
 export PROJECT_ID=$(gcloud config get-value project)
 export CLUSTER_NAME=$(gcloud container clusters list --zone=$ZONE --format="value(name)" | head -n 1)
 export REGION=$(echo $ZONE | cut -d'-' -f1,2)
 
-# Wait till cluster is actually READY
-echo "⏳ Connecting to cluster..."
+echo "⏳ Connecting to GKE Cluster..."
 gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
 
 export NAMESPACE_NAME=$(kubectl get ns --no-headers -o custom-columns=":metadata.name" | grep -vE 'default|kube-|gke-' | head -n 1)
@@ -32,11 +44,10 @@ fi
 
 echo "✅ Project ID : $PROJECT_ID"
 echo "✅ Cluster    : $CLUSTER_NAME"
-echo "✅ Zone       : $ZONE"
 echo "✅ Region     : $REGION"
 echo "✅ Namespace  : $NAMESPACE_NAME"
 
-# TASK 1 & 2: Managed Prometheus Deployment
+# TASK 1 & 2: Managed Prometheus
 echo "📦 Task 1 & 2: Deploying Prometheus Test App..."
 cat <<EOF > prometheus-app.yaml
 apiVersion: apps/v1
