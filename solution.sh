@@ -1,36 +1,29 @@
 #!/bin/bash
-# ==============================================================================
-# Qwiklabs/GCP Challenge Lab Interactive Automated Script
-# Dynamic Region, Zone, Namespace & User Prompt for Service Name
-# ==============================================================================
-
+# Dynamic & Non-blocking Script
 set -e
 
-# Clear screen for clean interactive prompt
-clear
+# Accept parameters from command line directly!
+export SERVICE_NAME=$1
+export ZONE=$2
 
-echo "=================================================================="
-echo "🚀 WELCOME TO AUTOMATED CHALLENGE LAB SOLVER"
-echo "=================================================================="
-echo ""
-# Prompt user for input
-read -p "📌 Enter the Service Name for Task 6 (e.g., helloweb-service-9xuc): " SERVICE_NAME
-echo ""
-
-if [ -z "$SERVICE_NAME" ]; then
-    echo "⚠️  No Service Name provided! Exiting script to protect your credits."
+if [ -z "$SERVICE_NAME" ] || [ -z "$ZONE" ]; then
+    echo "❌ Error: Inputs missing!"
+    echo "👉 Usage: curl -fsSL <URL> | bash -s <SERVICE_NAME> <ZONE>"
+    echo "👉 Example: curl -fsSL <URL> | bash -s helloweb-service-9xuc us-west1-b"
     exit 1
 fi
 
-echo "✅ Service Name set to: $SERVICE_NAME"
-echo "⏳ Starting lab setup..."
-echo "=================================================================="
+echo "🚀 Starting Automated Challenge Lab Script..."
 
 # 1. AUTO-DETECT ENVIRONMENT VARIABLES
 export PROJECT_ID=$(gcloud config get-value project)
-export CLUSTER_NAME=$(gcloud container clusters list --format="value(name)" | head -n 1)
-export ZONE=$(gcloud container clusters list --format="value(zone)" | head -n 1)
+export CLUSTER_NAME=$(gcloud container clusters list --zone=$ZONE --format="value(name)" | head -n 1)
 export REGION=$(echo $ZONE | cut -d'-' -f1,2)
+
+# Wait till cluster is actually READY
+echo "⏳ Connecting to cluster..."
+gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
+
 export NAMESPACE_NAME=$(kubectl get ns --no-headers -o custom-columns=":metadata.name" | grep -vE 'default|kube-|gke-' | head -n 1)
 
 if [ -z "$NAMESPACE_NAME" ]; then
@@ -42,9 +35,6 @@ echo "✅ Cluster    : $CLUSTER_NAME"
 echo "✅ Zone       : $ZONE"
 echo "✅ Region     : $REGION"
 echo "✅ Namespace  : $NAMESPACE_NAME"
-
-# Connect to GKE Cluster
-gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
 
 # TASK 1 & 2: Managed Prometheus Deployment
 echo "📦 Task 1 & 2: Deploying Prometheus Test App..."
@@ -73,7 +63,7 @@ EOF
 
 kubectl apply -f prometheus-app.yaml -n $NAMESPACE_NAME
 
-# TASK 3 & 4: Manifest Download, Log Metric & Alert Policy
+# TASK 3 & 4: Log Metric & Alert Policy
 echo "📦 Task 3 & 4: Setting up Log Metric & Alerting Policy..."
 gcloud storage cp -r gs://spls/gsp510/hello-app/ .
 
@@ -118,7 +108,7 @@ EOF
 
 gcloud alpha monitoring policies create --policy-from-file="alert-policy.json" || true
 
-# TASK 5: Re-deploy App with Valid Image
+# TASK 5: Re-deploy App
 echo "📦 Task 5: Updating image tag & re-deploying..."
 kubectl delete deployment helloweb -n $NAMESPACE_NAME --ignore-not-found
 
@@ -129,7 +119,6 @@ kubectl apply -f hello-app/manifests/helloweb-deployment.yaml -n $NAMESPACE_NAME
 echo "📦 Task 6: Updating code, pushing v2 image & exposing service..."
 sed -i 's/Version: 1.0.0/Version: 2.0.0/g' hello-app/main.go
 
-# Auto-create Artifact Registry Repo if missing
 gcloud artifacts repositories create demo-repo \
     --repository-format=docker \
     --location=$REGION \
@@ -140,7 +129,6 @@ gcloud builds submit hello-app --tag $IMAGE_TAG
 
 kubectl set image deployment/helloweb helloweb=$IMAGE_TAG -n $NAMESPACE_NAME || kubectl set image deployment/helloweb hello-app=$IMAGE_TAG -n $NAMESPACE_NAME
 
-# Expose service using user-provided variable
 kubectl expose deployment helloweb \
     --name=$SERVICE_NAME \
     --type=LoadBalancer \
