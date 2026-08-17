@@ -7,11 +7,11 @@ set -Eeuo pipefail
 # Full automation for Tasks 1, 2 and 3
 #
 # IMPORTANT:
-# The Qwiklabs lab enables the required APIs automatically.
+# Qwiklabs enables the required APIs automatically.
 # DO NOT run "gcloud services enable" with the student account.
 #
-# This script is safe to run as:
-#   curl -fsSL "RAW_GITHUB_URL" | bash
+# This script is safe to run with:
+# curl -fsSL "RAW_GITHUB_URL" | bash
 # ============================================================
 
 trap 'printf "\n❌ Automation failed at line %s.\n" "$LINENO" >&2' ERR
@@ -47,8 +47,70 @@ fail() {
 }
 
 # ------------------------------------------------------------
-# Start
+# Wait for a list of APIs
+# Usage:
+#   wait_for_services "label" service1 service2 service3
 # ------------------------------------------------------------
+
+wait_for_services() {
+  local label="$1"
+  shift
+
+  local services=("$@")
+  local max_checks=36
+  local interval=10
+  local missing=()
+  local attempt
+  local service
+
+  log "Waiting for $label"
+
+  for attempt in $(seq 1 "$max_checks"); do
+    missing=()
+
+    printf '\nChecking %s APIs (%s/%s)...\n' \
+      "$label" "$attempt" "$max_checks"
+
+    for service in "${services[@]}"; do
+      if gcloud services describe "$service" \
+          --project="$PROJECT_ID" >/dev/null 2>&1; then
+
+        printf '  ✅ %s\n' "$service"
+
+      else
+
+        missing+=("$service")
+        printf '  ⏳ %s\n' "$service"
+
+      fi
+    done
+
+    if (( ${#missing[@]} == 0 )); then
+      ok "$label APIs are available."
+      return 0
+    fi
+
+    if (( attempt < max_checks )); then
+      printf '\nWaiting %s seconds for lab setup...\n' "$interval"
+      sleep "$interval"
+    fi
+  done
+
+  printf '\n'
+  printf '%s\n' '============================================================'
+  printf '%s\n' "❌ $label API SETUP DID NOT FINISH IN TIME"
+  printf '%s\n' '============================================================'
+  printf '\nStill unavailable:\n'
+  printf '  - %s\n' "${missing[@]}"
+  printf '\n'
+  printf '%s\n' 'Do NOT run gcloud services enable.'
+  printf '%s\n' 'Restart the Qwiklabs lab if the setup is stuck.'
+  exit 1
+}
+
+# ============================================================
+# START
+# ============================================================
 
 printf '\n'
 printf '%s\n' '============================================================'
@@ -64,11 +126,6 @@ command -v curl >/dev/null 2>&1 || \
 
 # ------------------------------------------------------------
 # Detect project
-# ------------------------------------------------------------
-# We do NOT call "gcloud config set project" when the project
-# is already configured. All subsequent commands explicitly use
-# --project, so changing the global config is unnecessary.
-# This also avoids the hang seen in Cloud Shell.
 # ------------------------------------------------------------
 
 log 'Detecting Qwiklabs project'
@@ -86,7 +143,7 @@ fi
 printf 'Project ID : %s\n' "$PROJECT_ID"
 
 # ------------------------------------------------------------
-# Get project number
+# Project number
 # ------------------------------------------------------------
 
 log 'Getting project number'
@@ -107,70 +164,25 @@ printf 'Region         : %s\n' "$REGION"
 printf 'Backend SA     : %s\n' "$COMPUTE_SA"
 
 # ============================================================
-# WAIT FOR REQUIRED LAB APIs
+# TASK 1 API CHECK
+# IMPORTANT:
+# API Gateway is NOT checked here.
 # ============================================================
 
-log 'Waiting for Qwiklabs lab APIs'
-
-REQUIRED_SERVICES=(
+TASK1_APIS=(
   "cloudfunctions.googleapis.com"
   "cloudbuild.googleapis.com"
   "artifactregistry.googleapis.com"
   "run.googleapis.com"
-  "api-gateway.googleapis.com"
-  "servicemanagement.googleapis.com"
-  "servicecontrol.googleapis.com"
-  "pubsub.googleapis.com"
 )
 
-MAX_API_CHECKS=36
-API_CHECK_INTERVAL=10
+wait_for_services "Task 1" "${TASK1_APIS[@]}"
 
-MISSING_SERVICES=()
+# ============================================================
+# TASK 1 - CREATE CLOUD RUN FUNCTION
+# ============================================================
 
-for attempt in $(seq 1 "$MAX_API_CHECKS"); do
-  MISSING_SERVICES=()
-
-  printf '\nChecking lab APIs (%s/%s)...\n' \
-    "$attempt" "$MAX_API_CHECKS"
-
-  for service in "${REQUIRED_SERVICES[@]}"; do
-    if gcloud services describe "$service" \
-        --project="$PROJECT_ID" >/dev/null 2>&1; then
-      printf '  ✅ %s\n' "$service"
-    else
-      MISSING_SERVICES+=("$service")
-      printf '  ⏳ %s\n' "$service"
-    fi
-  done
-
-  if (( ${#MISSING_SERVICES[@]} == 0 )); then
-    ok 'All required lab APIs are available.'
-    break
-  fi
-
-  if (( attempt < MAX_API_CHECKS )); then
-    printf '\nWaiting %s seconds for lab setup...\n' \
-      "$API_CHECK_INTERVAL"
-    sleep "$API_CHECK_INTERVAL"
-  fi
-done
-
-if (( ${#MISSING_SERVICES[@]} > 0 )); then
-  printf '\n'
-  printf '%s\n' '============================================================'
-  printf '%s\n' '❌ LAB API SETUP DID NOT FINISH IN TIME'
-  printf '%s\n' '============================================================'
-  printf '\nStill unavailable:\n'
-  printf '  - %s\n' "${MISSING_SERVICES[@]}"
-  printf '\nDo NOT run gcloud services enable.\n'
-  printf 'Restart the Qwiklabs lab if the setup is stuck.\n'
-  exit 1
-fi
-
-# ------------------------------------------------------------
-# Temporary directory
-# ------------------------------------------------------------
+log 'Task 1 - Creating Cloud Run function'
 
 WORKDIR="$(mktemp -d)"
 
@@ -179,12 +191,6 @@ cleanup() {
 }
 
 trap cleanup EXIT
-
-# ============================================================
-# TASK 1 - CREATE CLOUD RUN FUNCTION
-# ============================================================
-
-log 'Task 1 - Creating Cloud Run function'
 
 cat > "$WORKDIR/package.json" <<'EOF'
 {
@@ -229,7 +235,20 @@ FUNCTION_URL="$(
 ok "Task 1 complete: $FUNCTION_URL"
 
 # ============================================================
-# TASK 2 - CREATE API GATEWAY
+# TASK 2 API CHECK
+# Now wait specifically for API Gateway APIs.
+# ============================================================
+
+TASK2_APIS=(
+  "api-gateway.googleapis.com"
+  "servicemanagement.googleapis.com"
+  "servicecontrol.googleapis.com"
+)
+
+wait_for_services "Task 2 / API Gateway" "${TASK2_APIS[@]}"
+
+# ============================================================
+# TASK 2 - API GATEWAY
 # ============================================================
 
 log 'Task 2 - Creating OpenAPI specification'
@@ -339,7 +358,6 @@ fi
 log 'Waiting for API Gateway to become ACTIVE'
 
 GATEWAY_STATE=""
-
 MAX_GATEWAY_CHECKS=40
 GATEWAY_CHECK_INTERVAL=15
 
@@ -370,6 +388,16 @@ done
   fail 'API Gateway did not become ACTIVE in the expected time.'
 
 ok 'API Gateway is ACTIVE'
+
+# ============================================================
+# TASK 3 API CHECK
+# ============================================================
+
+TASK3_APIS=(
+  "pubsub.googleapis.com"
+)
+
+wait_for_services "Task 3 / Pub/Sub" "${TASK3_APIS[@]}"
 
 # ============================================================
 # TASK 3 - PUB/SUB
