@@ -1,4 +1,4 @@
-```bash
+
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -591,4 +591,4 @@ printf 'Gateway : %s\n' "$GATEWAY_URL"
 printf '\n'
 printf '%s\n' '👉 Now click "Check my progress" on the lab page.'
 printf '%s\n' '============================================================'
-```
+
