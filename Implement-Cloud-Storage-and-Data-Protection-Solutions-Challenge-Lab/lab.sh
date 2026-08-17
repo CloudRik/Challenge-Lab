@@ -2,19 +2,12 @@
 
 set -Eeuo pipefail
 
+trap 'echo; echo "❌ ERROR at line $LINENO"; echo "Command: $BASH_COMMAND"; exit 1' ERR
+
 # ============================================================
-# Google Cloud Storage Challenge Lab Automation
+# Google Cloud Storage Challenge Lab - Universal Automation
+# Supports known task variants for the random-assignment lab.
 # ============================================================
-
-# ------------------------------------------------------------
-# Error handler
-# ------------------------------------------------------------
-
-trap 'echo; echo "❌ Script failed at line $LINENO"; echo "Command: $BASH_COMMAND"; exit 1' ERR
-
-# ------------------------------------------------------------
-# Functions
-# ------------------------------------------------------------
 
 die() {
     echo
@@ -24,7 +17,7 @@ die() {
 
 prompt() {
     local message="$1"
-    local __resultvar="$2"
+    local variable="$2"
     local value=""
 
     if [[ -t 0 ]]; then
@@ -35,7 +28,7 @@ prompt() {
         die "Interactive terminal (/dev/tty) is not available."
     fi
 
-    printf -v "$__resultvar" '%s' "$value"
+    printf -v "$variable" '%s' "$value"
 }
 
 confirm() {
@@ -54,8 +47,38 @@ confirm() {
 }
 
 # ------------------------------------------------------------
-# Start
+# Helper: clean bucket name
 # ------------------------------------------------------------
+
+clean_bucket() {
+    local value="$1"
+    value="${value#gs://}"
+    value="${value%/}"
+    printf '%s' "$value"
+}
+
+# ------------------------------------------------------------
+# Task menu
+# ------------------------------------------------------------
+
+show_task_menu() {
+    echo
+    echo "============================================================"
+    echo " AVAILABLE TASK VARIANTS"
+    echo "============================================================"
+    echo
+    echo "  1) Create Bucket1 - STANDARD"
+    echo "  2) Create Bucket1 - NEARLINE"
+    echo "  3) Update sample.txt in Bucket2"
+    echo "  4) Publish Bucket2 object to web"
+    echo "  5) Change Bucket3 default class to ARCHIVE"
+    echo "  6) Add labels to Bucket3"
+    echo
+}
+
+# ============================================================
+# START
+# ============================================================
 
 echo
 echo "============================================================"
@@ -64,10 +87,8 @@ echo "============================================================"
 echo
 
 # ------------------------------------------------------------
-# 1. Check gcloud
+# Check gcloud
 # ------------------------------------------------------------
-
-echo "Checking Google Cloud CLI..."
 
 command -v gcloud >/dev/null 2>&1 || \
     die "gcloud CLI is not installed."
@@ -75,49 +96,65 @@ command -v gcloud >/dev/null 2>&1 || \
 echo "✅ gcloud CLI found."
 
 # ------------------------------------------------------------
-# 2. Get user inputs
+# User inputs
 # ------------------------------------------------------------
 
 echo
 echo "============================================================"
-echo " USER INPUT"
+echo " BASIC LAB INFORMATION"
 echo "============================================================"
 echo
 
 prompt "Enter Project ID: " PROJECT_ID
-prompt "Enter Region (example: us-west1): " REGION
+prompt "Enter Region (example: us-east4): " REGION
 prompt "Enter Bucket1 name: " BUCKET1
 prompt "Enter Bucket2 name: " BUCKET2
 prompt "Enter Bucket3 name: " BUCKET3
 
-# Remove accidental gs:// prefix
 PROJECT_ID="${PROJECT_ID#gs://}"
-BUCKET1="${BUCKET1#gs://}"
-BUCKET2="${BUCKET2#gs://}"
-BUCKET3="${BUCKET3#gs://}"
 
-# Remove accidental trailing slash
-BUCKET1="${BUCKET1%/}"
-BUCKET2="${BUCKET2%/}"
-BUCKET3="${BUCKET3%/}"
-
-# ------------------------------------------------------------
-# 3. Validate inputs
-# ------------------------------------------------------------
+BUCKET1="$(clean_bucket "$BUCKET1")"
+BUCKET2="$(clean_bucket "$BUCKET2")"
+BUCKET3="$(clean_bucket "$BUCKET3")"
 
 [[ -n "$PROJECT_ID" ]] || die "Project ID cannot be empty."
 [[ -n "$REGION" ]] || die "Region cannot be empty."
-[[ -n "$BUCKET1" ]] || die "Bucket1 name cannot be empty."
-[[ -n "$BUCKET2" ]] || die "Bucket2 name cannot be empty."
-[[ -n "$BUCKET3" ]] || die "Bucket3 name cannot be empty."
+[[ -n "$BUCKET1" ]] || die "Bucket1 cannot be empty."
+[[ -n "$BUCKET2" ]] || die "Bucket2 cannot be empty."
+[[ -n "$BUCKET3" ]] || die "Bucket3 cannot be empty."
 
 # ------------------------------------------------------------
-# 4. Display configuration
+# Select assigned task variants
+# ------------------------------------------------------------
+
+show_task_menu
+
+prompt "Enter Task 1 variant number: " TASK1
+prompt "Enter Task 2 variant number: " TASK2
+prompt "Enter Task 3 variant number: " TASK3
+
+case "$TASK1" in
+    1|2) ;;
+    *) die "Invalid Task 1 variant. Use 1 or 2." ;;
+esac
+
+case "$TASK2" in
+    3|4) ;;
+    *) die "Invalid Task 2 variant. Use 3 or 4." ;;
+esac
+
+case "$TASK3" in
+    5|6) ;;
+    *) die "Invalid Task 3 variant. Use 5 or 6." ;;
+esac
+
+# ------------------------------------------------------------
+# Show configuration
 # ------------------------------------------------------------
 
 echo
 echo "============================================================"
-echo " Configuration"
+echo " CONFIGURATION"
 echo "============================================================"
 echo
 echo "Project ID : $PROJECT_ID"
@@ -126,20 +163,23 @@ echo "Bucket1    : $BUCKET1"
 echo "Bucket2    : $BUCKET2"
 echo "Bucket3    : $BUCKET3"
 echo
+echo "Task 1     : Variant $TASK1"
+echo "Task 2     : Variant $TASK2"
+echo "Task 3     : Variant $TASK3"
+echo
 
 if ! confirm "Continue with these values? [y/N]: "; then
-    echo
     echo "❌ Cancelled."
     exit 0
 fi
 
-# ------------------------------------------------------------
-# 5. Check authentication
-# ------------------------------------------------------------
+# ============================================================
+# AUTHENTICATION
+# ============================================================
 
 echo
 echo "============================================================"
-echo " Checking Authentication"
+echo " CHECKING AUTHENTICATION"
 echo "============================================================"
 echo
 
@@ -155,186 +195,255 @@ ACTIVE_ACCOUNT="$(
 
 echo "✅ Active account: $ACTIVE_ACCOUNT"
 
-# ------------------------------------------------------------
-# 6. Set project
-# ------------------------------------------------------------
+# ============================================================
+# PROJECT
+# ============================================================
 
 echo
 echo "============================================================"
-echo " Setting Project"
+echo " SETTING PROJECT"
 echo "============================================================"
 echo
 
 gcloud config set project "$PROJECT_ID"
 
-echo "✅ Project set to: $PROJECT_ID"
+echo "✅ Project: $PROJECT_ID"
 
-# ------------------------------------------------------------
-# 7. Set region
-# ------------------------------------------------------------
+# ============================================================
+# REGION
+# ============================================================
 
 echo
 echo "============================================================"
-echo " Setting Region"
+echo " SETTING REGION"
 echo "============================================================"
 echo
 
 gcloud config set compute/region "$REGION"
 
-echo "✅ Region set to: $REGION"
+echo "✅ Region: $REGION"
 
 # ============================================================
 # TASK 1
-# Create Bucket1 with NEARLINE
 # ============================================================
 
 echo
 echo "============================================================"
-echo " TASK 1 - Bucket1 / NEARLINE"
+echo " TASK 1"
 echo "============================================================"
 echo
 
-if gcloud storage buckets describe "gs://$BUCKET1" >/dev/null 2>&1; then
+case "$TASK1" in
 
-    echo "ℹ️ Bucket1 already exists."
-    echo "Updating default storage class to NEARLINE..."
+    1)
+        echo "Creating Bucket1 with STANDARD storage class..."
 
-    gcloud storage buckets update \
-        "gs://$BUCKET1" \
-        --default-storage-class=NEARLINE
+        if gcloud storage buckets describe "gs://$BUCKET1" \
+            >/dev/null 2>&1; then
 
-    echo "✅ Bucket1 updated to NEARLINE."
+            echo "ℹ️ Bucket1 already exists."
+            echo "Leaving existing storage class unchanged."
 
-else
+        else
+            gcloud storage buckets create \
+                "gs://$BUCKET1" \
+                --project="$PROJECT_ID" \
+                --location="$REGION"
 
-    echo "Creating Bucket1..."
+            echo "✅ Bucket1 created."
+        fi
+        ;;
 
-    gcloud storage buckets create \
-        "gs://$BUCKET1" \
-        --project="$PROJECT_ID" \
-        --location="$REGION" \
-        --default-storage-class=NEARLINE
+    2)
+        echo "Creating Bucket1 with NEARLINE storage class..."
 
-    echo "✅ Bucket1 created with NEARLINE."
-fi
+        if gcloud storage buckets describe "gs://$BUCKET1" \
+            >/dev/null 2>&1; then
 
-# ------------------------------------------------------------
-# Verify Task 1
-# ------------------------------------------------------------
+            echo "ℹ️ Bucket1 already exists."
+            echo "Updating default storage class to NEARLINE..."
 
-BUCKET1_CLASS="$(
-    gcloud storage buckets describe \
-        "gs://$BUCKET1" \
-        --format="value(storageClass)"
-)"
+            gcloud storage buckets update \
+                "gs://$BUCKET1" \
+                --default-storage-class=NEARLINE
 
-if [[ "$BUCKET1_CLASS" != "NEARLINE" ]]; then
-    die "Task 1 verification failed. Bucket1 storage class is: $BUCKET1_CLASS"
-fi
+        else
 
-echo "✅ Task 1 verification passed."
+            gcloud storage buckets create \
+                "gs://$BUCKET1" \
+                --project="$PROJECT_ID" \
+                --location="$REGION" \
+                --default-storage-class=NEARLINE
+        fi
+
+        echo "✅ Bucket1 configured as NEARLINE."
+        ;;
+esac
 
 # ============================================================
 # TASK 2
-# Update sample.txt in Bucket2
 # ============================================================
 
 echo
 echo "============================================================"
-echo " TASK 2 - Update sample.txt in Bucket2"
+echo " TASK 2"
 echo "============================================================"
 echo
 
-# Check Bucket2
-if ! gcloud storage buckets describe "gs://$BUCKET2" >/dev/null 2>&1; then
-    die "Bucket2 does not exist: gs://$BUCKET2"
-fi
+case "$TASK2" in
 
-echo "✅ Bucket2 exists."
+    # --------------------------------------------------------
+    # Variant 3: Update sample.txt
+    # --------------------------------------------------------
 
-EXPECTED_CONTENT="This is an example of editing the file content for cloud storage object"
+    3)
 
-# Create temporary file safely
-TMP_FILE="$(mktemp)"
+        echo "Updating sample.txt in Bucket2..."
 
-cleanup() {
-    rm -f "$TMP_FILE"
-}
+        if ! gcloud storage buckets describe \
+            "gs://$BUCKET2" >/dev/null 2>&1; then
 
-trap cleanup EXIT
+            die "Bucket2 does not exist: gs://$BUCKET2"
+        fi
 
-printf '%s\n' "$EXPECTED_CONTENT" > "$TMP_FILE"
+        EXPECTED_CONTENT="This is an example of editing the file content for cloud storage object"
 
-echo "Uploading sample.txt..."
+        TMP_FILE="$(mktemp)"
 
-gcloud storage cp \
-    "$TMP_FILE" \
-    "gs://$BUCKET2/sample.txt"
+        cleanup_task2() {
+            rm -f "$TMP_FILE"
+        }
 
-echo "✅ sample.txt uploaded."
+        trap cleanup_task2 EXIT
 
-# Verify content
-ACTUAL_CONTENT="$(
-    gcloud storage cat \
-        "gs://$BUCKET2/sample.txt"
-)"
+        printf '%s\n' "$EXPECTED_CONTENT" > "$TMP_FILE"
 
-if [[ "$ACTUAL_CONTENT" != "$EXPECTED_CONTENT" ]]; then
+        gcloud storage cp \
+            "$TMP_FILE" \
+            "gs://$BUCKET2/sample.txt"
 
-    echo
-    echo "❌ Task 2 verification failed."
-    echo
-    echo "Expected:"
-    printf '%s\n' "$EXPECTED_CONTENT"
-    echo
-    echo "Actual:"
-    printf '%s\n' "$ACTUAL_CONTENT"
+        ACTUAL_CONTENT="$(
+            gcloud storage cat \
+                "gs://$BUCKET2/sample.txt"
+        )"
 
-    exit 1
-fi
+        if [[ "$ACTUAL_CONTENT" != "$EXPECTED_CONTENT" ]]; then
+            die "Bucket2 sample.txt content verification failed."
+        fi
 
-echo "✅ Task 2 content verified."
+        rm -f "$TMP_FILE"
+
+        trap - EXIT
+
+        echo "✅ sample.txt updated successfully."
+        ;;
+
+    # --------------------------------------------------------
+    # Variant 4: Public object
+    # --------------------------------------------------------
+
+    4)
+
+        echo "Making Bucket2 object publicly readable..."
+
+        if ! gcloud storage buckets describe \
+            "gs://$BUCKET2" >/dev/null 2>&1; then
+
+            die "Bucket2 does not exist: gs://$BUCKET2"
+        fi
+
+        prompt "Enter object name inside Bucket2: " OBJECT_NAME
+
+        [[ -n "$OBJECT_NAME" ]] || \
+            die "Object name cannot be empty."
+
+        OBJECT_NAME="${OBJECT_NAME#/}"
+
+        if ! gcloud storage ls \
+            "gs://$BUCKET2/$OBJECT_NAME" >/dev/null 2>&1; then
+
+            die "Object not found: gs://$BUCKET2/$OBJECT_NAME"
+        fi
+
+        gcloud storage objects update \
+            "gs://$BUCKET2/$OBJECT_NAME" \
+            --add-acl-grant=entity=allUsers,role=READER
+
+        echo
+        echo "✅ Object is now publicly readable:"
+        echo "   gs://$BUCKET2/$OBJECT_NAME"
+        ;;
+esac
 
 # ============================================================
 # TASK 3
-# Change Bucket3 to ARCHIVE
 # ============================================================
 
 echo
 echo "============================================================"
-echo " TASK 3 - Bucket3 / ARCHIVE"
+echo " TASK 3"
 echo "============================================================"
 echo
 
-# Check Bucket3
-if ! gcloud storage buckets describe "gs://$BUCKET3" >/dev/null 2>&1; then
-    die "Bucket3 does not exist: gs://$BUCKET3"
-fi
+case "$TASK3" in
 
-echo "✅ Bucket3 exists."
-echo "Updating default storage class to ARCHIVE..."
+    # --------------------------------------------------------
+    # Variant 5: ARCHIVE
+    # --------------------------------------------------------
 
-gcloud storage buckets update \
-    "gs://$BUCKET3" \
-    --default-storage-class=ARCHIVE
+    5)
 
-echo "✅ Bucket3 updated to ARCHIVE."
+        echo "Changing Bucket3 default storage class to ARCHIVE..."
 
-# ------------------------------------------------------------
-# Verify Task 3
-# ------------------------------------------------------------
+        if ! gcloud storage buckets describe \
+            "gs://$BUCKET3" >/dev/null 2>&1; then
 
-BUCKET3_CLASS="$(
-    gcloud storage buckets describe \
-        "gs://$BUCKET3" \
-        --format="value(storageClass)"
-)"
+            die "Bucket3 does not exist: gs://$BUCKET3"
+        fi
 
-if [[ "$BUCKET3_CLASS" != "ARCHIVE" ]]; then
-    die "Task 3 verification failed. Bucket3 storage class is: $BUCKET3_CLASS"
-fi
+        gcloud storage buckets update \
+            "gs://$BUCKET3" \
+            --default-storage-class=ARCHIVE
 
-echo "✅ Task 3 verification passed."
+        echo "✅ Bucket3 configured as ARCHIVE."
+        ;;
+
+    # --------------------------------------------------------
+    # Variant 6: Labels
+    # --------------------------------------------------------
+
+    6)
+
+        echo "Adding label to Bucket3..."
+
+        if ! gcloud storage buckets describe \
+            "gs://$BUCKET3" >/dev/null 2>&1; then
+
+            die "Bucket3 does not exist: gs://$BUCKET3"
+        fi
+
+        echo
+        echo "Enter the label exactly as required by your lab."
+        echo "Example: environment=lab"
+        echo
+
+        prompt "Label key: " LABEL_KEY
+        prompt "Label value: " LABEL_VALUE
+
+        [[ -n "$LABEL_KEY" ]] || \
+            die "Label key cannot be empty."
+
+        [[ -n "$LABEL_VALUE" ]] || \
+            die "Label value cannot be empty."
+
+        gcloud storage buckets update \
+            "gs://$BUCKET3" \
+            --update-labels="${LABEL_KEY}=${LABEL_VALUE}"
+
+        echo "✅ Label added to Bucket3."
+        ;;
+
+esac
 
 # ============================================================
 # FINAL VERIFICATION
@@ -356,21 +465,46 @@ echo "  $REGION"
 echo
 echo "Bucket1:"
 echo "  gs://$BUCKET1"
-echo "  Storage class: $BUCKET1_CLASS"
+
+gcloud storage buckets describe \
+    "gs://$BUCKET1" \
+    --format="value(storageClass)" 2>/dev/null \
+    || true
 
 echo
 echo "Bucket2:"
-echo "  gs://$BUCKET2/sample.txt"
-echo "  Content:"
-gcloud storage cat "gs://$BUCKET2/sample.txt"
+echo "  gs://$BUCKET2"
+
+if [[ "$TASK2" == "3" ]]; then
+    echo "  sample.txt:"
+    gcloud storage cat "gs://$BUCKET2/sample.txt"
+fi
+
+if [[ "$TASK2" == "4" ]]; then
+    echo "  Public object configured."
+fi
 
 echo
 echo "Bucket3:"
 echo "  gs://$BUCKET3"
-echo "  Storage class: $BUCKET3_CLASS"
+
+if [[ "$TASK3" == "5" ]]; then
+    gcloud storage buckets describe \
+        "gs://$BUCKET3" \
+        --format="value(storageClass)"
+fi
+
+if [[ "$TASK3" == "6" ]]; then
+    echo "  Labels:"
+    gcloud storage buckets describe \
+        "gs://$BUCKET3" \
+        --format="value(labels)"
+fi
 
 echo
 echo "============================================================"
-echo " ✅ ALL TASKS COMPLETED SUCCESSFULLY"
+echo " ✅ SCRIPT COMPLETED"
 echo "============================================================"
+echo
+echo "Now click 'Check my progress' for each lab task."
 echo
