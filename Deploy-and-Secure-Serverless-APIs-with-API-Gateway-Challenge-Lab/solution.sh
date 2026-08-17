@@ -1,19 +1,23 @@
+```bash
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
 # ============================================================
 # ARC109 - Deploy and Secure Serverless APIs with API Gateway
-# Automated solution for Tasks 1, 2 and 3
+# Full Automation for Tasks 1, 2 and 3
 #
 # IMPORTANT:
-# This lab pre-enables the required Google Cloud APIs.
-# Do NOT run "gcloud services enable" here because the lab
-# student account may not have permission to enable services.
+# Qwiklabs enables the required APIs automatically.
+# DO NOT use "gcloud services enable" with the student account.
+#
+# This script waits for the lab APIs to become available before
+# starting the actual lab tasks.
 # ============================================================
 
 trap 'printf "\n❌ Automation failed at line %s.\n" "$LINENO" >&2' ERR
 
 REGION="us-east1"
+
 FUNCTION_NAME="gcfunction"
 FUNCTION_ENTRY="helloHttp"
 
@@ -25,9 +29,26 @@ DISPLAY_NAME="gcfunction API"
 TOPIC_NAME="demo-topic"
 DEFAULT_SUBSCRIPTION="demo-topic-sub"
 
-log()  { printf '\n🔹 %s\n' "$1"; }
-ok()   { printf '✅ %s\n' "$1"; }
-fail() { printf '❌ %s\n' "$1" >&2; exit 1; }
+# ------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------
+
+log() {
+  printf '\n🔹 %s\n' "$1"
+}
+
+ok() {
+  printf '✅ %s\n' "$1"
+}
+
+fail() {
+  printf '❌ %s\n' "$1" >&2
+  exit 1
+}
+
+# ------------------------------------------------------------
+# Start
+# ------------------------------------------------------------
 
 printf '\n'
 printf '%s\n' '============================================================'
@@ -42,15 +63,26 @@ command -v curl >/dev/null 2>&1 || \
   fail 'curl was not found.'
 
 # ------------------------------------------------------------
-# Detect the Qwiklabs project automatically
+# Detect Qwiklabs project automatically
 # ------------------------------------------------------------
-PROJECT_ID="$(gcloud config get-value project 2>/dev/null | tr -d '\r' | xargs || true)"
+
+PROJECT_ID="$(
+  gcloud config get-value project 2>/dev/null |
+  tr -d '\r' |
+  xargs || true
+)"
 
 if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
   read -r -p '👉 Enter your Google Cloud Project ID: ' PROJECT_ID
-  [[ -n "$PROJECT_ID" ]] || fail 'Project ID cannot be empty.'
+
+  [[ -n "$PROJECT_ID" ]] || \
+    fail 'Project ID cannot be empty.'
+
   gcloud config set project "$PROJECT_ID" >/dev/null
 fi
+
+# Make sure gcloud is using the correct project.
+gcloud config set project "$PROJECT_ID" >/dev/null
 
 PROJECT_NUMBER="$(
   gcloud projects describe "$PROJECT_ID" \
@@ -67,12 +99,20 @@ printf 'Project Number : %s\n' "$PROJECT_NUMBER"
 printf 'Region         : %s\n' "$REGION"
 printf 'Backend SA     : %s\n' "$COMPUTE_SA"
 
-# ------------------------------------------------------------
+# ============================================================
+# WAIT FOR LAB APIs
+# ============================================================
+#
 # IMPORTANT:
-# The lab pre-enables the required APIs. We only VERIFY them.
-# We intentionally do NOT call "gcloud services enable".
-# ------------------------------------------------------------
-log 'Verifying lab APIs are available'
+# Do NOT enable APIs manually.
+#
+# The original script checked only once and exited when
+# api-gateway.googleapis.com was not ready yet.
+#
+# This version waits and checks repeatedly.
+# ============================================================
+
+log 'Waiting for Qwiklabs lab APIs to become available'
 
 REQUIRED_SERVICES=(
   "cloudfunctions.googleapis.com"
@@ -85,38 +125,77 @@ REQUIRED_SERVICES=(
   "pubsub.googleapis.com"
 )
 
-ENABLED_SERVICES="$(
-  gcloud services list \
-    --enabled \
-    --project="$PROJECT_ID" \
-    --format='value(config.name)' 2>/dev/null || true
-)"
+MAX_API_CHECKS=36
+API_CHECK_INTERVAL=10
 
 MISSING_SERVICES=()
 
-for service in "${REQUIRED_SERVICES[@]}"; do
-  if ! printf '%s\n' "$ENABLED_SERVICES" | grep -qx "$service"; then
-    MISSING_SERVICES+=("$service")
+for attempt in $(seq 1 "$MAX_API_CHECKS"); do
+
+  ENABLED_SERVICES="$(
+    gcloud services list \
+      --enabled \
+      --project="$PROJECT_ID" \
+      --format='value(config.name)' 2>/dev/null || true
+  )"
+
+  MISSING_SERVICES=()
+
+  for service in "${REQUIRED_SERVICES[@]}"; do
+    if ! printf '%s\n' "$ENABLED_SERVICES" | grep -qx "$service"; then
+      MISSING_SERVICES+=("$service")
+    fi
+  done
+
+  if (( ${#MISSING_SERVICES[@]} == 0 )); then
+    ok 'All required lab APIs are enabled.'
+    break
   fi
+
+  printf '\n⏳ Lab API setup is still in progress...'
+  printf ' (%s/%s)\n' "$attempt" "$MAX_API_CHECKS"
+
+  printf '   Still waiting for:\n'
+  printf '   - %s\n' "${MISSING_SERVICES[@]}"
+
+  if (( attempt < MAX_API_CHECKS )); then
+    sleep "$API_CHECK_INTERVAL"
+  fi
+
 done
 
 if (( ${#MISSING_SERVICES[@]} > 0 )); then
-  printf '\n❌ The lab APIs below are not enabled:\n'
+  printf '\n'
+  printf '%s\n' '============================================================'
+  printf '%s\n' '❌ LAB API SETUP DID NOT FINISH IN TIME'
+  printf '%s\n' '============================================================'
+  printf '\nStill missing:\n'
   printf '   - %s\n' "${MISSING_SERVICES[@]}"
-  printf '\nThe Qwiklabs lab normally enables these automatically.\n'
-  printf 'Do not try to enable them with the student account; restart the lab if the setup has not finished yet.\n'
+  printf '\n'
+  printf '%s\n' 'The lab normally enables these APIs automatically.'
+  printf '%s\n' 'Do NOT run gcloud services enable with the student account.'
+  printf '%s\n' 'Restart the lab if the setup is stuck.'
+  printf '\n'
   exit 1
 fi
 
-ok 'All required lab APIs are already enabled.'
+# ------------------------------------------------------------
+# Temporary working directory
+# ------------------------------------------------------------
 
 WORKDIR="$(mktemp -d)"
-cleanup() { rm -rf "$WORKDIR"; }
+
+cleanup() {
+  rm -rf "$WORKDIR"
+}
+
 trap cleanup EXIT
 
 # ============================================================
-# TASK 1 - Create a Cloud Run function (2nd gen)
+# TASK 1
+# Create Cloud Run Function (2nd Gen)
 # ============================================================
+
 log 'Task 1 - Deploying Cloud Run function'
 
 cat > "$WORKDIR/package.json" <<'PKG1'
@@ -146,6 +225,10 @@ gcloud functions deploy "$FUNCTION_NAME" \
   --project="$PROJECT_ID" \
   --quiet
 
+# ------------------------------------------------------------
+# Get deployed Cloud Run function URL
+# ------------------------------------------------------------
+
 FUNCTION_URL="$(
   gcloud functions describe "$FUNCTION_NAME" \
     --gen2 \
@@ -160,9 +243,11 @@ FUNCTION_URL="$(
 ok "Cloud Run function deployed: $FUNCTION_URL"
 
 # ============================================================
-# TASK 2 - Create API Gateway
+# TASK 2
+# Create API Gateway
 # ============================================================
-log 'Task 2 - Building OpenAPI spec'
+
+log 'Task 2 - Building OpenAPI specification'
 
 cat > "$WORKDIR/openapispec.yaml" <<EOF2
 swagger: '2.0'
@@ -188,26 +273,34 @@ paths:
             type: string
 EOF2
 
-# API
+# ------------------------------------------------------------
+# Create API
+# ------------------------------------------------------------
+
+log 'Checking API'
+
 if gcloud api-gateway apis describe "$API_ID" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
+
   ok "API $API_ID already exists; reusing it."
+
 else
+
   gcloud api-gateway apis create "$API_ID" \
     --display-name="$DISPLAY_NAME" \
     --project="$PROJECT_ID" \
     --quiet
 
   ok "API $API_ID created."
+
 fi
 
-# API config
-#
-# API configs are immutable. On a fresh lab the config will not exist,
-# so it is created exactly with the lab-required name.
-#
-# If the script is rerun after a partial run, reusing the same config
-# is safe because the Cloud Run function keeps the same service URL.
+# ------------------------------------------------------------
+# Create API Config
+# ------------------------------------------------------------
+
+log 'Checking API config'
+
 if gcloud api-gateway api-configs describe "$API_CONFIG" \
     --api="$API_ID" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
@@ -216,7 +309,7 @@ if gcloud api-gateway api-configs describe "$API_CONFIG" \
 
 else
 
-  log 'Creating API config (this can take several minutes)'
+  log 'Creating API config - this may take several minutes'
 
   gcloud api-gateway api-configs create "$API_CONFIG" \
     --api="$API_ID" \
@@ -226,9 +319,15 @@ else
     --quiet
 
   ok "API config $API_CONFIG created."
+
 fi
 
-# API Gateway
+# ------------------------------------------------------------
+# Create API Gateway
+# ------------------------------------------------------------
+
+log 'Checking API Gateway'
+
 if gcloud api-gateway gateways describe "$GATEWAY_ID" \
     --location="$REGION" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
@@ -237,7 +336,7 @@ if gcloud api-gateway gateways describe "$GATEWAY_ID" \
 
 else
 
-  log 'Creating API Gateway (this can take several minutes)'
+  log 'Creating API Gateway - this may take several minutes'
 
   gcloud api-gateway gateways create "$GATEWAY_ID" \
     --api="$API_ID" \
@@ -248,14 +347,21 @@ else
     --quiet
 
   ok "API Gateway $GATEWAY_ID created."
+
 fi
 
-# Wait until gateway is ACTIVE.
+# ------------------------------------------------------------
+# Wait for Gateway ACTIVE
+# ------------------------------------------------------------
+
 log 'Waiting for API Gateway to become ACTIVE'
 
 GATEWAY_STATE=""
 
-for attempt in {1..40}; do
+MAX_GATEWAY_CHECKS=40
+GATEWAY_CHECK_INTERVAL=15
+
+for attempt in $(seq 1 "$MAX_GATEWAY_CHECKS"); do
 
   GATEWAY_STATE="$(
     gcloud api-gateway gateways describe "$GATEWAY_ID" \
@@ -264,14 +370,19 @@ for attempt in {1..40}; do
       --format='value(state)' 2>/dev/null || true
   )"
 
-  printf 'Gateway state: %s (check %s/40)\n' \
-    "${GATEWAY_STATE:-UNKNOWN}" "$attempt"
+  printf 'Gateway state: %s (check %s/%s)\n' \
+    "${GATEWAY_STATE:-UNKNOWN}" \
+    "$attempt" \
+    "$MAX_GATEWAY_CHECKS"
 
   if [[ "$GATEWAY_STATE" == "ACTIVE" ]]; then
     break
   fi
 
-  sleep 15
+  if (( attempt < MAX_GATEWAY_CHECKS )); then
+    sleep "$GATEWAY_CHECK_INTERVAL"
+  fi
+
 done
 
 [[ "$GATEWAY_STATE" == "ACTIVE" ]] || \
@@ -280,9 +391,15 @@ done
 ok 'API Gateway is ACTIVE.'
 
 # ============================================================
-# TASK 3 - Create Pub/Sub topic + default subscription
+# TASK 3
+# Create Pub/Sub Topic + Default Subscription
 # ============================================================
+
 log 'Task 3 - Creating Pub/Sub topic'
+
+# ------------------------------------------------------------
+# Create topic
+# ------------------------------------------------------------
 
 if gcloud pubsub topics describe "$TOPIC_NAME" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
@@ -296,10 +413,13 @@ else
     --quiet
 
   ok "Topic $TOPIC_NAME created."
+
 fi
 
-# The lab's "Create a default subscription" option results in the
-# demo-topic-sub subscription. We create the same resource via CLI.
+# ------------------------------------------------------------
+# Create default subscription
+# ------------------------------------------------------------
+
 if gcloud pubsub subscriptions describe "$DEFAULT_SUBSCRIPTION" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
 
@@ -313,11 +433,13 @@ else
     --quiet
 
   ok "Default subscription $DEFAULT_SUBSCRIPTION created."
+
 fi
 
-# ------------------------------------------------------------
-# Update the function with the Pub/Sub publishing code
-# ------------------------------------------------------------
+# ============================================================
+# Update Cloud Run Function for Pub/Sub
+# ============================================================
+
 log 'Task 3 - Updating function to publish to Pub/Sub'
 
 cat > "$WORKDIR/package.json" <<'PKG3'
@@ -339,7 +461,6 @@ const functions = require('@google-cloud/functions-framework');
 
 functions.http('helloHttp', async (req, res) => {
   try {
-    // Publish the message and wait for Pub/Sub to accept it.
     await topic.publishMessage({
       data: Buffer.from('Hello from Cloud Run functions!')
     });
@@ -351,6 +472,12 @@ functions.http('helloHttp', async (req, res) => {
   }
 });
 JS3
+
+# ------------------------------------------------------------
+# Redeploy function
+# ------------------------------------------------------------
+
+log 'Redeploying Cloud Run function with Pub/Sub code'
 
 gcloud functions deploy "$FUNCTION_NAME" \
   --gen2 \
@@ -366,9 +493,10 @@ gcloud functions deploy "$FUNCTION_NAME" \
 ok 'Function redeployed with Pub/Sub publishing code.'
 
 # ============================================================
-# Invoke API Gateway endpoint
+# Invoke API Gateway
 # ============================================================
-log 'Invoking the API through API Gateway'
+
+log 'Getting API Gateway hostname'
 
 GATEWAY_HOST="$(
   gcloud api-gateway gateways describe "$GATEWAY_ID" \
@@ -382,13 +510,21 @@ GATEWAY_HOST="$(
 
 GATEWAY_URL="https://${GATEWAY_HOST}/gcfunction"
 
-printf 'Gateway URL: %s\n' "$GATEWAY_URL"
+printf '\nGateway URL: %s\n' "$GATEWAY_URL"
+
+# ------------------------------------------------------------
+# Invoke Gateway repeatedly
+# ------------------------------------------------------------
+
+log 'Invoking API Gateway endpoint'
 
 RESPONSE=""
 SUCCESS=0
 
-# API Gateway can take a little extra time after reaching ACTIVE.
-for attempt in {1..20}; do
+MAX_INVOKE_ATTEMPTS=20
+INVOKE_INTERVAL=15
+
+for attempt in $(seq 1 "$MAX_INVOKE_ATTEMPTS"); do
 
   RESPONSE="$(
     curl -fsS \
@@ -401,34 +537,58 @@ for attempt in {1..20}; do
     break
   fi
 
-  printf '⏳ Gateway endpoint not ready yet (attempt %s/20)\n' "$attempt"
-  sleep 15
+  printf '⏳ Gateway endpoint not ready yet (attempt %s/%s)\n' \
+    "$attempt" \
+    "$MAX_INVOKE_ATTEMPTS"
+
+  if [[ -n "$RESPONSE" ]]; then
+    printf '   Response: %s\n' "$RESPONSE"
+  fi
+
+  if (( attempt < MAX_INVOKE_ATTEMPTS )); then
+    sleep "$INVOKE_INTERVAL"
+  fi
+
 done
 
 if [[ "$SUCCESS" -ne 1 ]]; then
-  printf '\nLast response: %s\n' "$RESPONSE" >&2
+
+  printf '\n'
+  printf '%s\n' '============================================================'
+  printf '%s\n' '❌ API GATEWAY INVOCATION FAILED'
+  printf '%s\n' '============================================================'
+  printf '\nLast response:\n%s\n\n' "$RESPONSE"
+
   fail 'API Gateway invocation did not return the expected success message.'
+
 fi
 
 ok 'API Gateway successfully invoked the Pub/Sub backend.'
 
 # ============================================================
-# Final
+# FINAL
 # ============================================================
+
 printf '\n'
 printf '%s\n' '============================================================'
 printf '%s\n' '            🎉 LAB AUTOMATION COMPLETED 🎉'
 printf '%s\n' '============================================================'
+
 printf '✅ Task 1: Cloud Run function deployed\n'
 printf '✅ Task 2: API Gateway configured\n'
-printf '✅ Task 3: Pub/Sub topic + default subscription configured\n'
+printf '✅ Task 3: Pub/Sub topic created\n'
+printf '✅ Task 3: Default subscription created\n'
+printf '✅ Task 3: Function updated and redeployed\n'
 printf '✅ API Gateway invocation completed successfully\n'
-printf '\nProject : %s\nRegion  : %s\nFunction: %s\nTopic   : %s\nGateway : %s\n' \
-  "$PROJECT_ID" \
-  "$REGION" \
-  "$FUNCTION_NAME" \
-  "$TOPIC_NAME" \
-  "$GATEWAY_URL"
 
-printf '\n%s\n' '👉 Now click “Check my progress” on the lab page.'
+printf '\n'
+printf 'Project : %s\n' "$PROJECT_ID"
+printf 'Region  : %s\n' "$REGION"
+printf 'Function: %s\n' "$FUNCTION_NAME"
+printf 'Topic   : %s\n' "$TOPIC_NAME"
+printf 'Gateway : %s\n' "$GATEWAY_URL"
+
+printf '\n'
+printf '%s\n' '👉 Now click "Check my progress" on the lab page.'
 printf '%s\n' '============================================================'
+```
