@@ -47,7 +47,7 @@ detect_task() {
     input="$(normalize_task "$1")"
 
     # --------------------------------------------------------
-    # TASK 1 TYPES
+    # CREATE BUCKET TYPES
     # --------------------------------------------------------
 
     if [[ "$input" == *"coldline"* && "$input" == *"bucket"* ]]; then
@@ -60,7 +60,6 @@ detect_task() {
         return
     fi
 
-    # Generic "Create a bucket"
     if [[ "$input" == *"create a bucket"* ||
           "$input" == *"create a cloud storage bucket"* ]]; then
         echo "CREATE_STANDARD"
@@ -68,7 +67,18 @@ detect_task() {
     fi
 
     # --------------------------------------------------------
-    # TASK 2 TYPES
+    # ARCHIVE
+    # IMPORTANT: Check this BEFORE sample.txt/update matching.
+    # --------------------------------------------------------
+
+    if [[ "$input" == *"archive"* &&
+          "$input" == *"storage class"* ]]; then
+        echo "ARCHIVE_BUCKET3"
+        return
+    fi
+
+    # --------------------------------------------------------
+    # RETENTION POLICY
     # --------------------------------------------------------
 
     if [[ "$input" == *"retention policy"* ]]; then
@@ -76,12 +86,9 @@ detect_task() {
         return
     fi
 
-    if [[ "$input" == *"update the file content"* ||
-          "$input" == *"sample.txt"* ||
-                   "$input" == *"editing the file content"* ]]; then
-        echo "UPDATE_SAMPLE_TXT"
-        return
-    fi
+    # --------------------------------------------------------
+    # PUBLIC OBJECT
+    # --------------------------------------------------------
 
     if [[ "$input" == *"publish cloud storage files to web"* ||
           "$input" == *"publicly available"* ||
@@ -91,7 +98,19 @@ detect_task() {
     fi
 
     # --------------------------------------------------------
-    # TASK 3 TYPES
+    # UPDATE sample.txt
+    # STRICT MATCHING
+    # --------------------------------------------------------
+
+    if [[ "$input" == *"update the file content of cloud storage object"* ||
+          "$input" == *"edit the file contents of sample.txt"* ||
+          ( "$input" == *"sample.txt"* && "$input" == *"edit"* ) ]]; then
+        echo "UPDATE_SAMPLE_TXT"
+        return
+    fi
+
+    # --------------------------------------------------------
+    # ADD FILE TO BUCKET3
     # --------------------------------------------------------
 
     if [[ "$input" == *"add a file to the bucket"* ||
@@ -100,11 +119,9 @@ detect_task() {
         return
     fi
 
-    if [[ "$input" == *"archive"* &&
-          "$input" == *"storage class"* ]]; then
-        echo "ARCHIVE_BUCKET3"
-        return
-    fi
+    # --------------------------------------------------------
+    # LABEL BUCKET3
+    # --------------------------------------------------------
 
     if [[ "$input" == *"add labels to cloud storage bucket"* ||
           "$input" == *"add labels"* ]]; then
