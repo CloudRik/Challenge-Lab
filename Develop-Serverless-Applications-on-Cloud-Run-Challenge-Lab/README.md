@@ -19,6 +19,4 @@
 Open **Google Cloud Shell** in your active lab session and run the following command:
 
 ```bash
-curl -LO "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/solution.sh"
-chmod +x solution.sh
-./solution.sh
+curl -fsSL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Develop-Serverless-Applications-on-Cloud-Run-Challenge-Lab/solve.sh -o /tmp/solve.sh && chmod +x /tmp/solve.sh && /tmp/solve.sh
