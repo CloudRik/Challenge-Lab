@@ -6,25 +6,30 @@ echo "         Automated Solution for Multimodal Vector Search Lab          "
 echo "======================================================================"
 echo ""
 
-# Auto-detect Project ID from active Cloud Shell session
+# 1. Auto-detect Project ID from Cloud Shell context
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
-# Auto-detect Region from gcloud config, fallback to us-east4 if not set
-DETECTED_REGION=$(gcloud config get-value compute/region 2>/dev/null)
-export REGION=${DETECTED_REGION:-"us-east4"}
-
-export CONN_NAME="vector_conn"
-
 if [ -z "$PROJECT_ID" ]; then
-  echo "Error: Project ID could not be detected. Please make sure you are in Cloud Shell."
+  echo "Error: Could not detect Project ID."
   exit 1
 fi
 
-echo "--> Detected Project ID : $PROJECT_ID"
-echo "--> Detected Region     : $REGION"
-echo ""
-
 gcloud config set project $PROJECT_ID --quiet
+
+# 2. Dynamically fetch the EXACT Location/Region of the pre-created dataset
+echo "--> Detecting Pre-created Dataset Location..."
+export REGION=$(bq show --format=json "$PROJECT_ID:gcc_bqml_dataset" | grep -o '"location": *"[^"]*"' | awk -F '"' '{print $4}')
+
+# Fallback to us-central1 if detection fails
+if [ -z "$REGION" ]; then
+  export REGION="us-central1"
+fi
+
+export CONN_NAME="vector_conn"
+
+echo "--> Target Project ID : $PROJECT_ID"
+echo "--> Detected Location  : $REGION"
+echo ""
 
 # ------------------------------------------------------------------------------
 # Task 1: Create connection and grant IAM permissions
@@ -53,8 +58,8 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SA_ID" \
   --role="roles/aiplatform.user" --no-user-output-enabled
 
-echo "Waiting 25 seconds for IAM permissions to propagate fully..."
-sleep 25
+echo "Waiting 30 seconds for IAM permissions to propagate fully..."
+sleep 30
 
 # ------------------------------------------------------------------------------
 # Task 2: Create external object table
