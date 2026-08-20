@@ -1,33 +1,24 @@
 #!/bin/bash
-# ==============================================================================
-# Script Name: Implement Multimodal Vector Search with BigQuery (Challenge Lab)
-# ==============================================================================
-
 set -e
 
-# Clear screen and banner
-clear
 echo "======================================================================"
 echo "         Automated Solution for Multimodal Vector Search Lab          "
 echo "======================================================================"
 echo ""
 
-# 1. Prompt User Inputs
-DEFAULT_PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
-read -p "Enter GCP Project ID [$DEFAULT_PROJECT_ID]: " PROJECT_ID
-PROJECT_ID=${PROJECT_ID:-$DEFAULT_PROJECT_ID}
-
-read -p "Enter Region [default: us-east4]: " REGION
-REGION=${REGION:-us-east4}
-
+# Auto-detect Project ID & Region directly from Cloud Shell context
+export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+export REGION="us-east4"
 export CONN_NAME="vector_conn"
 
-echo ""
-echo "--> Starting Execution for Project: $PROJECT_ID | Region: $REGION..."
-echo ""
+if [ -z "$PROJECT_ID" ]; then
+  echo "Error: Project ID not found. Please make sure you are logged in."
+  exit 1
+fi
 
-# Set active project
-gcloud config set project $PROJECT_ID
+echo "--> Target Project ID: $PROJECT_ID"
+echo "--> Target Region: $REGION"
+echo ""
 
 # ------------------------------------------------------------------------------
 # Task 1: Create a source connection and grant IAM permissions
@@ -39,7 +30,6 @@ bq mk --connection \
   --project_id=$PROJECT_ID \
   --connection_type=CLOUD_RESOURCE $CONN_NAME
 
-# Extract Service Account ID
 SA_ID=$(bq show --location=$REGION --connection $CONN_NAME | grep "serviceAccountId" | awk -F '"' '{print $4}')
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -54,8 +44,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SA_ID" \
   --role="roles/aiplatform.user" --no-user-output-enabled
 
-# Wait for IAM permissions propagation
-echo "Waiting for IAM permissions to propagate..."
+echo "Waiting 10s for IAM propagation..."
 sleep 10
 
 # ------------------------------------------------------------------------------
