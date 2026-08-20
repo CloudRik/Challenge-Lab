@@ -19,4 +19,4 @@
 Open **Google Cloud Shell** in your active lab session and run the following command:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Implement-Multimodal-Vector-Search-with-BigQuery-Challenge-Lab/solution.sh -o solution.sh && bash solution.sh
+curl -sSL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Implement-Multimodal-Vector-Search-with-BigQuery-Challenge-Lab/solution.sh | bash
