@@ -1,176 +1,306 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-# ============================================================
+set -Eeuo pipefail
+
+###############################################################################
 # GSP345 - Build Infrastructure with Terraform on Google Cloud
-# Fully automated version
-# ============================================================
+#
+# Fully automated solution for the Challenge Lab.
+#
+# User input required:
+#   1. Bucket Name
+#   2. Third Instance Name
+#   3. VPC Name
+#
+# Project ID, Zone, Region, existing VM details and boot images are detected
+# automatically from the active Qwiklabs project.
+###############################################################################
+
+###############################################################################
+# COLORS / LOGGING
+###############################################################################
+
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+CYAN="\033[0;36m"
+NC="\033[0m"
+
+log() {
+    echo -e "${CYAN}[INFO]${NC} $*"
+}
+
+ok() {
+    echo -e "${GREEN}[OK]${NC} $*"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARN]${NC} $*"
+}
 
 die() {
-    echo
-    echo "ERROR: $*" >&2
+    echo -e "${RED}[ERROR]${NC} $*" >&2
     exit 1
 }
 
-# ============================================================
-# AUTO-DETECT PROJECT
-# ============================================================
+###############################################################################
+# ERROR HANDLER
+###############################################################################
 
-PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
+trap 'echo -e "${RED}[ERROR]${NC} Script stopped at line $LINENO."; exit 1' ERR
+
+###############################################################################
+# CHECK REQUIRED COMMANDS
+###############################################################################
+
+command -v gcloud >/dev/null 2>&1 || die "gcloud is not installed."
+command -v terraform >/dev/null 2>&1 || die "Terraform is not installed."
+
+###############################################################################
+# PROJECT DETECTION
+###############################################################################
+
+PROJECT_ID="$(gcloud config get-value project 2>/dev/null || true)"
 
 [[ -n "$PROJECT_ID" && "$PROJECT_ID" != "(unset)" ]] \
-    || die "No active Google Cloud project."
+    || die "No active Google Cloud project was detected."
 
 echo
 echo "============================================================"
-echo " GSP345 - Build Infrastructure with Terraform"
+echo " GSP345 - Terraform Challenge Lab"
 echo "============================================================"
 echo
 echo "Project ID detected:"
-echo "$PROJECT_ID"
+echo "  $PROJECT_ID"
 echo
 
-# ============================================================
-# ASK USER FOR LAB VALUES
-# ============================================================
+###############################################################################
+# USER INPUT
+###############################################################################
 
 echo "Enter the values shown in the Google Skills Boost Lab Setup."
-echo "You only need to enter these ONCE."
+echo "You only need to enter these three values."
 echo
 
 read -r -p "Bucket Name: " BUCKET_NAME
-read -r -p "Third Instance Name: " INSTANCE_NAME
+read -r -p "Third Instance Name: " INSTANCE_3
 read -r -p "VPC Name: " VPC_NAME
-read -r -p "Zone: " ZONE
 
-# Remove accidental spaces
 BUCKET_NAME="$(echo "$BUCKET_NAME" | xargs)"
-INSTANCE_NAME="$(echo "$INSTANCE_NAME" | xargs)"
+INSTANCE_3="$(echo "$INSTANCE_3" | xargs)"
 VPC_NAME="$(echo "$VPC_NAME" | xargs)"
-ZONE="$(echo "$ZONE" | xargs)"
 
 [[ -n "$BUCKET_NAME" ]] || die "Bucket Name cannot be empty."
-[[ -n "$INSTANCE_NAME" ]] || die "Instance Name cannot be empty."
+[[ -n "$INSTANCE_3" ]] || die "Third Instance Name cannot be empty."
 [[ -n "$VPC_NAME" ]] || die "VPC Name cannot be empty."
-[[ -n "$ZONE" ]] || die "Zone cannot be empty."
 
-REGION="${ZONE%-*}"
+###############################################################################
+# VALIDATE USER-SUPPLIED RESOURCE NAMES
+###############################################################################
 
-echo
-echo "============================================================"
-echo "Configuration"
-echo "============================================================"
-echo "Project       : $PROJECT_ID"
-echo "Bucket        : $BUCKET_NAME"
-echo "Third VM      : $INSTANCE_NAME"
-echo "VPC           : $VPC_NAME"
-echo "Zone          : $ZONE"
-echo "Region        : $REGION"
-echo "============================================================"
-echo
+if [[ ! "$BUCKET_NAME" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]]; then
+    die "Invalid bucket name: $BUCKET_NAME"
+fi
 
-# ============================================================
-# CHECK EXISTING INSTANCES
-# ============================================================
+if [[ ! "$INSTANCE_3" =~ ^[a-z]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    die "Invalid instance name: $INSTANCE_3"
+fi
 
-echo "[CHECK] Checking pre-created instances..."
+if [[ ! "$VPC_NAME" =~ ^[a-z]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    die "Invalid VPC name: $VPC_NAME"
+fi
+
+###############################################################################
+# DISCOVER EXISTING INSTANCES
+###############################################################################
+
+log "Detecting pre-created lab instances..."
 
 for VM in tf-instance-1 tf-instance-2; do
+    gcloud compute instances describe "$VM" \
+        --project="$PROJECT_ID" \
+        >/dev/null 2>&1 \
+        || die "$VM was not found in the current lab project."
 
-    if ! gcloud compute instances describe "$VM" \
-        --zone="$ZONE" >/dev/null 2>&1; then
-
-        die "$VM was not found in zone $ZONE."
-    fi
-
+    ok "$VM exists."
 done
 
-echo "[OK] Existing instances found."
+###############################################################################
+# DISCOVER ZONE
+###############################################################################
 
-# ============================================================
-# GET MACHINE TYPE
-# ============================================================
+ZONE_1="$(
+    gcloud compute instances describe tf-instance-1 \
+        --project="$PROJECT_ID" \
+        --format='value(zone.basename())'
+)"
 
-get_machine_type() {
+ZONE_2="$(
+    gcloud compute instances describe tf-instance-2 \
+        --project="$PROJECT_ID" \
+        --format='value(zone.basename())'
+)"
 
-    gcloud compute instances describe "$1" \
+[[ -n "$ZONE_1" ]] || die "Could not determine zone of tf-instance-1."
+[[ -n "$ZONE_2" ]] || die "Could not determine zone of tf-instance-2."
+
+[[ "$ZONE_1" == "$ZONE_2" ]] \
+    || die "The two lab instances are in different zones: $ZONE_1 / $ZONE_2"
+
+ZONE="$ZONE_1"
+REGION="${ZONE%-*}"
+
+###############################################################################
+# DISCOVER MACHINE TYPES
+###############################################################################
+
+log "Detecting machine types..."
+
+MACHINE_1="$(
+    gcloud compute instances describe tf-instance-1 \
+        --project="$PROJECT_ID" \
         --zone="$ZONE" \
         --format='value(machineType.basename())'
-}
+)"
 
-# ============================================================
-# GET BOOT IMAGE
-# ============================================================
+MACHINE_2="$(
+    gcloud compute instances describe tf-instance-2 \
+        --project="$PROJECT_ID" \
+        --zone="$ZONE" \
+        --format='value(machineType.basename())'
+)"
 
-get_image() {
+[[ -n "$MACHINE_1" ]] || die "Could not determine machine type of tf-instance-1."
+[[ -n "$MACHINE_2" ]] || die "Could not determine machine type of tf-instance-2."
 
+###############################################################################
+# DISCOVER BOOT IMAGE
+#
+# IMPORTANT:
+# Do NOT use disks[0].deviceName.
+#
+# deviceName is typically "persistent-disk-0".
+# We need disks[0].source, extract the actual disk name, then query the disk.
+###############################################################################
+
+get_boot_image() {
     local VM="$1"
-    local DISK
+    local DISK_SOURCE
+    local DISK_NAME
+    local IMAGE
 
-    DISK="$(
+    DISK_SOURCE="$(
         gcloud compute instances describe "$VM" \
+            --project="$PROJECT_ID" \
             --zone="$ZONE" \
-            --format='value(disks[0].deviceName)'
+            --format='value(disks[0].source)'
     )"
 
-    gcloud compute disks describe "$DISK" \
-        --zone="$ZONE" \
-        --format='value(sourceImage)'
+    [[ -n "$DISK_SOURCE" ]] \
+        || die "Could not determine boot disk source for $VM."
+
+    DISK_NAME="${DISK_SOURCE##*/}"
+
+    [[ -n "$DISK_NAME" ]] \
+        || die "Could not determine boot disk name for $VM."
+
+    IMAGE="$(
+        gcloud compute disks describe "$DISK_NAME" \
+            --project="$PROJECT_ID" \
+            --zone="$ZONE" \
+            --format='value(sourceImage)'
+    )"
+
+    [[ -n "$IMAGE" ]] \
+        || die "Could not determine boot image for $VM."
+
+    echo "$IMAGE"
 }
 
-MACHINE_1="$(get_machine_type tf-instance-1)"
-MACHINE_2="$(get_machine_type tf-instance-2)"
+log "Detecting boot images..."
 
-IMAGE_1="$(get_image tf-instance-1)"
-IMAGE_2="$(get_image tf-instance-2)"
+IMAGE_1="$(get_boot_image tf-instance-1)"
+IMAGE_2="$(get_boot_image tf-instance-2)"
+
+###############################################################################
+# PRE-FLIGHT SUMMARY
+###############################################################################
 
 echo
-echo "Detected infrastructure:"
-echo "tf-instance-1 -> $MACHINE_1"
-echo "tf-instance-2 -> $MACHINE_2"
-echo "Image 1      -> $IMAGE_1"
-echo "Image 2      -> $IMAGE_2"
+echo "============================================================"
+echo " PRE-FLIGHT CONFIGURATION"
+echo "============================================================"
+echo "Project ID       : $PROJECT_ID"
+echo "Region           : $REGION"
+echo "Zone             : $ZONE"
+echo "Bucket           : $BUCKET_NAME"
+echo "Third Instance   : $INSTANCE_3"
+echo "VPC              : $VPC_NAME"
+echo "VM1 Machine Type : $MACHINE_1"
+echo "VM2 Machine Type : $MACHINE_2"
+echo "VM1 Boot Image   : $IMAGE_1"
+echo "VM2 Boot Image   : $IMAGE_2"
+echo "============================================================"
 echo
 
-# ============================================================
-# CREATE DIRECTORY STRUCTURE
-# ============================================================
+###############################################################################
+# CHECK RESOURCE NAME CONFLICTS
+###############################################################################
+
+if gcloud compute instances describe "$INSTANCE_3" \
+    --project="$PROJECT_ID" \
+    --zone="$ZONE" >/dev/null 2>&1; then
+
+    die "Third instance '$INSTANCE_3' already exists. Use a fresh lab."
+fi
+
+###############################################################################
+# WORKSPACE
+###############################################################################
+
+log "Preparing Terraform workspace..."
 
 mkdir -p modules/instances
 mkdir -p modules/storage
 
-# ============================================================
+###############################################################################
 # ROOT VARIABLES
-# ============================================================
+###############################################################################
 
 cat > variables.tf <<EOF
 variable "region" {
+  type    = string
   default = "$REGION"
 }
 
 variable "zone" {
+  type    = string
   default = "$ZONE"
 }
 
 variable "project_id" {
+  type    = string
   default = "$PROJECT_ID"
 }
 EOF
 
-# ============================================================
+###############################################################################
 # INSTANCE MODULE VARIABLES
-# ============================================================
+###############################################################################
 
 cat > modules/instances/variables.tf <<EOF
 variable "region" {
+  type    = string
   default = "$REGION"
 }
 
 variable "zone" {
+  type    = string
   default = "$ZONE"
 }
 
 variable "project_id" {
+  type    = string
   default = "$PROJECT_ID"
 }
 EOF
@@ -178,20 +308,23 @@ EOF
 cat > modules/instances/outputs.tf <<'EOF'
 EOF
 
-# ============================================================
+###############################################################################
 # STORAGE MODULE VARIABLES
-# ============================================================
+###############################################################################
 
 cat > modules/storage/variables.tf <<EOF
 variable "region" {
+  type    = string
   default = "$REGION"
 }
 
 variable "zone" {
+  type    = string
   default = "$ZONE"
 }
 
 variable "project_id" {
+  type    = string
   default = "$PROJECT_ID"
 }
 EOF
@@ -202,16 +335,15 @@ output "bucket_name" {
 }
 EOF
 
-# ============================================================
-# MAIN.TF
-# ============================================================
+###############################################################################
+# TASK 1 - ROOT MAIN.TF
+###############################################################################
 
-cat > main.tf <<'EOF'
+cat > main.tf <<EOF
 terraform {
   required_providers {
     google = {
-      source  = "hashicorp/google"
-      version = "6.50.0"
+      source = "hashicorp/google"
     }
   }
 }
@@ -223,17 +355,33 @@ provider "google" {
 }
 
 module "instances" {
-  source = "./modules/instances"
+  source     = "./modules/instances"
+  region     = var.region
+  zone       = var.zone
+  project_id = var.project_id
 }
 EOF
 
-# ============================================================
-# INSTANCE RESOURCES
-# ============================================================
+###############################################################################
+# TASK 1 - INITIALIZE
+###############################################################################
+
+log "Task 1: Initializing Terraform..."
+
+terraform fmt -recursive
+terraform init -upgrade
+terraform validate
+
+ok "Task 1 complete."
+
+###############################################################################
+# TASK 2 - INSTANCE CONFIGURATION
+###############################################################################
+
+log "Task 2: Creating minimal instance configuration..."
 
 cat > modules/instances/instances.tf <<EOF
 resource "google_compute_instance" "tf-instance-1" {
-
   name         = "tf-instance-1"
   machine_type = "$MACHINE_1"
 
@@ -254,9 +402,7 @@ resource "google_compute_instance" "tf-instance-1" {
   allow_stopping_for_update = true
 }
 
-
 resource "google_compute_instance" "tf-instance-2" {
-
   name         = "tf-instance-2"
   machine_type = "$MACHINE_2"
 
@@ -278,13 +424,62 @@ resource "google_compute_instance" "tf-instance-2" {
 }
 EOF
 
-# ============================================================
-# STORAGE BUCKET
-# ============================================================
+terraform fmt -recursive
+terraform validate
+
+###############################################################################
+# IMPORT INSTANCE 1
+###############################################################################
+
+if terraform state list 2>/dev/null | grep -Fxq \
+    'module.instances.google_compute_instance.tf-instance-1'; then
+
+    warn "tf-instance-1 is already in Terraform state."
+
+else
+    log "Importing tf-instance-1..."
+
+    terraform import -input=false \
+        'module.instances.google_compute_instance.tf-instance-1' \
+        "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-1"
+fi
+
+###############################################################################
+# IMPORT INSTANCE 2
+###############################################################################
+
+if terraform state list 2>/dev/null | grep -Fxq \
+    'module.instances.google_compute_instance.tf-instance-2'; then
+
+    warn "tf-instance-2 is already in Terraform state."
+
+else
+    log "Importing tf-instance-2..."
+
+    terraform import -input=false \
+        'module.instances.google_compute_instance.tf-instance-2' \
+        "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-2"
+fi
+
+###############################################################################
+# TASK 2 APPLY
+###############################################################################
+
+log "Applying Task 2..."
+
+terraform plan
+terraform apply -auto-approve
+
+ok "Task 2 complete."
+
+###############################################################################
+# TASK 3 - STORAGE MODULE
+###############################################################################
+
+log "Task 3: Creating Cloud Storage bucket..."
 
 cat > modules/storage/storage.tf <<EOF
 resource "google_storage_bucket" "tf_bucket" {
-
   name                        = "$BUCKET_NAME"
   location                    = "US"
   force_destroy               = true
@@ -292,139 +487,103 @@ resource "google_storage_bucket" "tf_bucket" {
 }
 EOF
 
-# ============================================================
-# TASK 1
-# ============================================================
-
-echo
-echo "============================================================"
-echo "TASK 1 - Configuration files"
-echo "============================================================"
-
-terraform fmt -recursive
-terraform init -upgrade
-terraform validate
-
-echo "[OK] Task 1 complete."
-
-# ============================================================
-# TASK 2 - IMPORT EXISTING INSTANCES
-# ============================================================
-
-echo
-echo "============================================================"
-echo "TASK 2 - Import infrastructure"
-echo "============================================================"
-
-if ! terraform state show \
-    'module.instances.google_compute_instance.tf-instance-1' \
-    >/dev/null 2>&1; then
-
-    terraform import -input=false \
-        'module.instances.google_compute_instance.tf-instance-1' \
-        "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-1"
-fi
-
-if ! terraform state show \
-    'module.instances.google_compute_instance.tf-instance-2' \
-    >/dev/null 2>&1; then
-
-    terraform import -input=false \
-        'module.instances.google_compute_instance.tf-instance-2' \
-        "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-2"
-fi
-
-terraform apply -auto-approve
-
-echo "[OK] Task 2 complete."
-
-# ============================================================
-# TASK 3 - STORAGE MODULE
-# ============================================================
-
-echo
-echo "============================================================"
-echo "TASK 3 - Remote backend"
-echo "============================================================"
-
-cat >> main.tf <<'EOF'
+cat >> main.tf <<EOF
 
 module "storage" {
-  source = "./modules/storage"
+  source     = "./modules/storage"
+  region     = var.region
+  zone       = var.zone
+  project_id = var.project_id
 }
 EOF
 
 terraform fmt -recursive
-terraform init -upgrade
+terraform init
+terraform validate
 
-if ! terraform state show \
-    'module.storage.google_storage_bucket.tf_bucket' \
-    >/dev/null 2>&1; then
+###############################################################################
+# CREATE BUCKET
+###############################################################################
 
-    terraform import -input=false \
-        'module.storage.google_storage_bucket.tf_bucket' \
-        "$BUCKET_NAME"
-fi
-
+terraform plan
 terraform apply -auto-approve
 
-# ============================================================
-# ADD GCS BACKEND
-# ============================================================
+###############################################################################
+# VERIFY BUCKET
+###############################################################################
 
-python3 - <<PY
+gcloud storage buckets describe "gs://$BUCKET_NAME" \
+    --project="$PROJECT_ID" >/dev/null 2>&1 \
+    || die "Terraform reported success but bucket verification failed."
+
+ok "Bucket created and verified."
+
+###############################################################################
+# TASK 3 - CONFIGURE GCS BACKEND
+###############################################################################
+
+log "Configuring GCS remote backend..."
+
+python3 - "$BUCKET_NAME" <<'PY'
 from pathlib import Path
+import sys
+
+bucket = sys.argv[1]
 
 p = Path("main.tf")
 s = p.read_text()
 
-if 'backend "gcs"' not in s:
-
-    s = s.replace(
-        'terraform {',
-        '''terraform {
-  backend "gcs" {
-    bucket = "$BUCKET_NAME"
+backend = f'''terraform {{
+  backend "gcs" {{
+    bucket = "{bucket}"
     prefix = "terraform/state"
-  }
-''',
-        1
-    )
+  }}
+
+'''
+
+if 'backend "gcs"' in s:
+    raise SystemExit("GCS backend already exists in main.tf.")
+
+if not s.startswith("terraform {"):
+    raise SystemExit("Terraform block not found.")
+
+s = s.replace("terraform {\n", backend, 1)
 
 p.write_text(s)
 PY
 
 terraform fmt -recursive
 
-echo "Migrating state to GCS..."
+###############################################################################
+# MIGRATE LOCAL STATE -> GCS
+###############################################################################
 
-printf 'yes\n' | terraform init -migrate-state -force-copy
+log "Migrating Terraform state to the GCS backend..."
 
-echo "[OK] Task 3 complete."
+printf 'yes\n' | terraform init -migrate-state
 
-# ============================================================
-# TASK 4 - MODIFY INSTANCES
-# ============================================================
+ok "Task 3 complete."
 
-echo
-echo "============================================================"
-echo "TASK 4 - Modify infrastructure"
-echo "============================================================"
+###############################################################################
+# TASK 4 - MODIFY EXISTING INSTANCES
+###############################################################################
 
-python3 - <<PY
+log "Task 4: Updating both existing instances to e2-standard-2..."
+
+python3 <<'PY'
 from pathlib import Path
 
 p = Path("modules/instances/instances.tf")
 s = p.read_text()
 
 s = s.replace(
-    'machine_type = "$MACHINE_1"',
+    'machine_type = "' + s.split('machine_type = "')[1].split('"')[0] + '"',
     'machine_type = "e2-standard-2"',
     1
 )
 
 s = s.replace(
-    'machine_type = "$MACHINE_2"',
+    'machine_type = "' + s.split('machine_type = "')[1].split('"')[0] + '"',
     'machine_type = "e2-standard-2"',
     1
 )
@@ -432,16 +591,15 @@ s = s.replace(
 p.write_text(s)
 PY
 
-# Add third instance
+###############################################################################
+# ADD THIRD INSTANCE
+###############################################################################
 
 cat >> modules/instances/instances.tf <<EOF
 
-
-resource "google_compute_instance" "$INSTANCE_NAME" {
-
-  name         = "$INSTANCE_NAME"
+resource "google_compute_instance" "tf-instance-3" {
+  name         = "$INSTANCE_3"
   machine_type = "e2-standard-2"
-  zone         = "$ZONE"
 
   boot_disk {
     initialize_params {
@@ -463,77 +621,76 @@ EOF
 
 terraform fmt -recursive
 terraform validate
+
+###############################################################################
+# TASK 4 APPLY
+###############################################################################
+
+terraform plan
 terraform apply -auto-approve
 
-echo "[OK] Task 4 complete."
+###############################################################################
+# VERIFY THIRD VM
+###############################################################################
 
-# ============================================================
-# TASK 5 - DESTROY THIRD INSTANCE
-# ============================================================
+gcloud compute instances describe "$INSTANCE_3" \
+    --project="$PROJECT_ID" \
+    --zone="$ZONE" >/dev/null 2>&1 \
+    || die "Third instance was not found after Terraform apply."
 
-echo
-echo "============================================================"
-echo "TASK 5 - Destroy resources"
-echo "============================================================"
+ok "Task 4 complete."
 
-python3 - <<PY
+###############################################################################
+# TASK 5 - REMOVE THIRD INSTANCE FROM CONFIGURATION
+###############################################################################
+
+log "Task 5: Removing third instance from Terraform configuration..."
+
+python3 <<'PY'
 from pathlib import Path
+import re
 
 p = Path("modules/instances/instances.tf")
 s = p.read_text()
 
-marker = 'resource "google_compute_instance" "$INSTANCE_NAME"'
+pattern = r'\nresource "google_compute_instance" "tf-instance-3" \{.*?\n\}\s*$'
 
-start = s.find(marker)
+new_s, count = re.subn(pattern, '', s, flags=re.S)
 
-if start == -1:
-    raise SystemExit("Third instance resource was not found.")
+if count != 1:
+    raise SystemExit("Could not locate exactly one third-instance block.")
 
-brace_start = s.find("{", start)
-
-depth = 0
-end = None
-
-for i in range(brace_start, len(s)):
-
-    if s[i] == "{":
-        depth += 1
-
-    elif s[i] == "}":
-        depth -= 1
-
-        if depth == 0:
-            end = i + 1
-            break
-
-if end is None:
-    raise SystemExit("Could not determine third instance block.")
-
-s = s[:start] + s[end:]
-
-p.write_text(s.strip() + "\n")
+p.write_text(new_s.rstrip() + "\n")
 PY
 
 terraform fmt -recursive
 terraform validate
+
+terraform plan
 terraform apply -auto-approve
 
-echo "[OK] Task 5 complete."
+###############################################################################
+# VERIFY THIRD VM IS GONE
+###############################################################################
 
-# ============================================================
-# TASK 6 - NETWORK REGISTRY MODULE
-# ============================================================
+if gcloud compute instances describe "$INSTANCE_3" \
+    --project="$PROJECT_ID" \
+    --zone="$ZONE" >/dev/null 2>&1; then
 
-echo
-echo "============================================================"
-echo "TASK 6 - Network module"
-echo "============================================================"
+    die "Task 5 failed: third instance still exists."
+fi
+
+ok "Task 5 complete."
+
+###############################################################################
+# TASK 6 - NETWORK MODULE
+###############################################################################
+
+log "Task 6: Adding Terraform Registry Network Module 10.0.0..."
 
 cat >> main.tf <<EOF
 
-
 module "vpc" {
-
   source  = "terraform-google-modules/network/google"
   version = "10.0.0"
 
@@ -542,13 +699,11 @@ module "vpc" {
   routing_mode = "GLOBAL"
 
   subnets = [
-
     {
       subnet_name   = "subnet-01"
       subnet_ip     = "10.10.10.0/24"
       subnet_region = var.region
     },
-
     {
       subnet_name   = "subnet-02"
       subnet_ip     = "10.10.20.0/24"
@@ -561,14 +716,47 @@ EOF
 terraform fmt -recursive
 terraform init -upgrade
 terraform validate
+
+###############################################################################
+# CREATE VPC + SUBNETS
+###############################################################################
+
+terraform plan
 terraform apply -auto-approve
 
-# ============================================================
-# CONNECT INSTANCES TO SUBNETS
-# ============================================================
+###############################################################################
+# VERIFY NETWORK
+###############################################################################
 
-python3 - <<PY
+gcloud compute networks describe "$VPC_NAME" \
+    --project="$PROJECT_ID" >/dev/null 2>&1 \
+    || die "VPC '$VPC_NAME' was not created."
+
+gcloud compute networks subnets describe subnet-01 \
+    --region="$REGION" \
+    --project="$PROJECT_ID" >/dev/null 2>&1 \
+    || die "subnet-01 was not created."
+
+gcloud compute networks subnets describe subnet-02 \
+    --region="$REGION" \
+    --project="$PROJECT_ID" >/dev/null 2>&1 \
+    || die "subnet-02 was not created."
+
+ok "VPC and both subnets verified."
+
+###############################################################################
+# UPDATE VM1 -> subnet-01
+# UPDATE VM2 -> subnet-02
+###############################################################################
+
+log "Connecting tf-instance-1 to subnet-01..."
+log "Connecting tf-instance-2 to subnet-02..."
+
+python3 - "$VPC_NAME" <<'PY'
 from pathlib import Path
+import sys
+
+vpc = sys.argv[1]
 
 p = Path("modules/instances/instances.tf")
 s = p.read_text()
@@ -578,18 +766,18 @@ old = '''network_interface {
   }'''
 
 new1 = '''network_interface {
-    network    = "$VPC_NAME"
+    network    = "''' + vpc + '''"
     subnetwork = "subnet-01"
   }'''
 
 new2 = '''network_interface {
-    network    = "$VPC_NAME"
+    network    = "''' + vpc + '''"
     subnetwork = "subnet-02"
   }'''
 
 if s.count(old) != 2:
     raise SystemExit(
-        "Expected exactly two default network interfaces."
+        f"Expected exactly 2 default network_interface blocks, found {s.count(old)}."
     )
 
 s = s.replace(old, new1, 1)
@@ -600,32 +788,31 @@ PY
 
 terraform fmt -recursive
 terraform validate
+
+###############################################################################
+# APPLY NETWORK CHANGES
+###############################################################################
+
+terraform plan
 terraform apply -auto-approve
 
-echo "[OK] Task 6 complete."
+ok "Task 6 complete."
 
-# ============================================================
+###############################################################################
 # TASK 7 - FIREWALL
-# ============================================================
+###############################################################################
 
-echo
-echo "============================================================"
-echo "TASK 7 - Configure firewall"
-echo "============================================================"
+log "Task 7: Creating HTTP firewall rule..."
 
 cat >> main.tf <<EOF
 
-
 resource "google_compute_firewall" "tf-firewall" {
-
   name    = "tf-firewall"
   network = "projects/$PROJECT_ID/global/networks/$VPC_NAME"
 
   allow {
-
     protocol = "tcp"
     ports    = ["80"]
-
   }
 
   source_ranges = ["0.0.0.0/0"]
@@ -634,39 +821,86 @@ EOF
 
 terraform fmt -recursive
 terraform validate
+
+###############################################################################
+# APPLY FIREWALL
+###############################################################################
+
+terraform plan
 terraform apply -auto-approve
 
-echo "[OK] Task 7 complete."
+###############################################################################
+# VERIFY FIREWALL
+###############################################################################
 
-# ============================================================
-# FINAL
-# ============================================================
+gcloud compute firewall-rules describe tf-firewall \
+    --project="$PROJECT_ID" >/dev/null 2>&1 \
+    || die "tf-firewall was not created."
+
+ok "Task 7 complete."
+
+###############################################################################
+# FINAL STATE CHECK
+###############################################################################
 
 echo
 echo "============================================================"
-echo "              GSP345 COMPLETE"
+echo " FINAL VERIFICATION"
 echo "============================================================"
 
-echo
-echo "Terraform resources:"
+log "Terraform state:"
 terraform state list
 
 echo
-echo "Compute instances:"
-gcloud compute instances list
+log "Checking required resources..."
 
-echo
-echo "VPC:"
-gcloud compute networks describe "$VPC_NAME" \
-    --format="value(name,routingConfig.routingMode)"
+terraform state list | grep -Fx \
+    'module.instances.google_compute_instance.tf-instance-1' \
+    >/dev/null \
+    || die "tf-instance-1 missing from Terraform state."
 
-echo
-echo "Firewall:"
-gcloud compute firewall-rules describe tf-firewall \
-    --format="value(name)"
+terraform state list | grep -Fx \
+    'module.instances.google_compute_instance.tf-instance-2' \
+    >/dev/null \
+    || die "tf-instance-2 missing from Terraform state."
+
+terraform state list | grep -Fx \
+    'module.storage.google_storage_bucket.tf_bucket' \
+    >/dev/null \
+    || die "Storage bucket missing from Terraform state."
+
+terraform state list | grep -Fx \
+    'module.vpc.google_compute_network.network' \
+    >/dev/null \
+    || die "VPC missing from Terraform state."
+
+terraform state list | grep -Fx \
+    'google_compute_firewall.tf-firewall' \
+    >/dev/null \
+    || die "Firewall missing from Terraform state."
+
+if terraform state list | grep -Fq 'tf-instance-3'; then
+    die "Third instance is still present in Terraform state."
+fi
 
 echo
 echo "============================================================"
-echo " ALL TERRAFORM TASKS FINISHED SUCCESSFULLY"
+echo -e "${GREEN} ALL TASKS COMPLETED SUCCESSFULLY ${NC}"
 echo "============================================================"
+echo
+echo "Project : $PROJECT_ID"
+echo "Region  : $REGION"
+echo "Zone    : $ZONE"
+echo "Bucket  : $BUCKET_NAME"
+echo "VPC     : $VPC_NAME"
+echo
+echo "Task 1  : COMPLETE"
+echo "Task 2  : COMPLETE"
+echo "Task 3  : COMPLETE"
+echo "Task 4  : COMPLETE"
+echo "Task 5  : COMPLETE"
+echo "Task 6  : COMPLETE"
+echo "Task 7  : COMPLETE"
+echo
+echo "Now use Google Skills Boost -> Check my progress."
 echo
