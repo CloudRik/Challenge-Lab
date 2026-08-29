@@ -1,563 +1,335 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Define color variables
-BLACK=`tput setaf 0`
-RED=`tput setaf 1`
-GREEN=`tput setaf 2`
-YELLOW=`tput setaf 3`
-BLUE=`tput setaf 4`
-MAGENTA=`tput setaf 5`
-CYAN=`tput setaf 6`
-WHITE=`tput setaf 7`
+# GSP345 - Build Infrastructure with Terraform on Google Cloud
+# Before running:
+#   export BUCKET_NAME="..."
+#   export INSTANCE_NAME="..."
+#   export VPC_NAME="..."
+#   export ZONE="..."
+# PROJECT_ID is read from the active gcloud project.
+# REGION is derived from ZONE unless explicitly set.
 
-BG_BLACK=`tput setab 0`
-BG_RED=`tput setab 1`
-BG_GREEN=`tput setab 2`
-BG_YELLOW=`tput setab 3`
-BG_BLUE=`tput setab 4`
-BG_MAGENTA=`tput setab 5`
-BG_CYAN=`tput setab 6`
-BG_WHITE=`tput setab 7`
+PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
+BUCKET_NAME="${BUCKET_NAME:-}"
+INSTANCE_NAME="${INSTANCE_NAME:-}"
+VPC_NAME="${VPC_NAME:-}"
+ZONE="${ZONE:-}"
+REGION="${REGION:-}"
 
-BOLD=`tput bold`
-RESET=`tput sgr0`
+die(){ echo "ERROR: $*" >&2; exit 1; }
+need(){ [[ -n "${!1:-}" ]] || die "Set $1 before running."; }
 
-# Display welcome message
-print_welcome() {
-    clear
-    echo "${BG_BLUE}${BOLD}====================================================${RESET}"
-    echo "${BG_BLUE}${BOLD}          GOOGLE CLOUD TERRAFORM LAB               ${RESET}"
-    echo "${BG_BLUE}${BOLD}                 GSP345                               ${RESET}"
-    echo "${BG_BLUE}${BOLD}====================================================${RESET}"
-    echo
-    echo "${BOLD}Infrastructure as Code • Terraform • Google Cloud${RESET}"
-    echo
+[[ -n "$PROJECT_ID" && "$PROJECT_ID" != "(unset)" ]] || die "No active gcloud project."
+need BUCKET_NAME
+need INSTANCE_NAME
+need VPC_NAME
+need ZONE
+[[ -n "$REGION" ]] || REGION="${ZONE%-*}"
+
+echo "Project=$PROJECT_ID  Region=$REGION  Zone=$ZONE"
+echo "Bucket=$BUCKET_NAME  Third instance=$INSTANCE_NAME  VPC=$VPC_NAME"
+
+# Discover the two lab-created VMs.
+for VM in tf-instance-1 tf-instance-2; do
+  gcloud compute instances describe "$VM" --zone="$ZONE" >/dev/null ||
+    die "$VM was not found in zone $ZONE"
+done
+
+get_image() {
+  local vm="$1" disk
+  disk="$(gcloud compute instances describe "$vm" --zone="$ZONE"     --format='value(disks[0].deviceName)')"
+  gcloud compute disks describe "$disk" --zone="$ZONE"     --format='value(sourceImage)'
 }
 
-# Display completion message
-print_completion() {
-    echo
-    echo "${BG_CYAN}${BOLD}====================================================${RESET}"
-    echo "${BG_CYAN}${BOLD}              ✓  LAB COMPLETE  ✓                   ${RESET}"
-    echo "${BG_CYAN}${BOLD}====================================================${RESET}"
-    echo
-    echo "${BOLD}All Terraform lab steps have been executed successfully.${RESET}"
-    echo "${BOLD}Your Google Cloud infrastructure is ready.${RESET}"
-    echo
+MACHINE_1="$(gcloud compute instances describe tf-instance-1 --zone="$ZONE"   --format='value(machineType.basename())')"
+MACHINE_2="$(gcloud compute instances describe tf-instance-2 --zone="$ZONE"   --format='value(machineType.basename())')"
+IMAGE_1="$(get_image tf-instance-1)"
+IMAGE_2="$(get_image tf-instance-2)"
+
+echo "Detected tf-instance-1: $MACHINE_1 / $IMAGE_1"
+echo "Detected tf-instance-2: $MACHINE_2 / $IMAGE_2"
+
+mkdir -p modules/instances modules/storage
+
+cat > variables.tf <<EOF
+variable "region"     { default = "$REGION" }
+variable "zone"       { default = "$ZONE" }
+variable "project_id" { default = "$PROJECT_ID" }
+EOF
+
+cat > modules/instances/variables.tf <<EOF
+variable "region"     { default = "$REGION" }
+variable "zone"       { default = "$ZONE" }
+variable "project_id" { default = "$PROJECT_ID" }
+EOF
+
+cat > modules/instances/outputs.tf <<'EOF'
+EOF
+
+cat > modules/storage/variables.tf <<EOF
+variable "region"     { default = "$REGION" }
+variable "zone"       { default = "$ZONE" }
+variable "project_id" { default = "$PROJECT_ID" }
+EOF
+
+cat > modules/storage/outputs.tf <<'EOF'
+output "bucket_name" {
+  value = google_storage_bucket.tf_bucket.name
 }
+EOF
 
-print_welcome
-
-# Get required variables from user
-read -p "${YELLOW}${BOLD}Enter your bucket name: ${RESET}" BUCKET
-read -p "${YELLOW}${BOLD}Enter your instance name: ${RESET}" INSTANCE
-read -p "${YELLOW}${BOLD}Enter your VPC name: ${RESET}" VPC
-read -p "${YELLOW}${BOLD}Enter your zone (e.g. us-central1-a): ${RESET}" ZONE
-
-export BUCKET
-export INSTANCE
-export VPC
-export ZONE
-
-echo "${GREEN}${BOLD}Variables set successfully!${RESET}"
-echo
-
-echo "${BG_MAGENTA}${BOLD}Starting Lab Execution${RESET}"
-
-gcloud auth list
-
-export PROJECT_ID=$(gcloud config get-value project)
-
-gcloud config set compute/zone $ZONE
-export REGION=${ZONE%-*}
-gcloud config set compute/region $REGION
-
-export PROJECT_ID=$DEVSHELL_PROJECT_ID
-
-instances_output=$(gcloud compute instances list --format="value(id)")
-
-# Read the instance IDs into variables
-IFS=$'\n' read -r -d '' instance_id_1 instance_id_2 <<< "$instances_output"
-
-# Output instance IDs with custom name
-export INSTANCE_ID_1=$instance_id_1
-export INSTANCE_ID_2=$instance_id_2
-
-echo "$instance_id_1"
-echo "$instance_id_2"
-
-touch main.tf
-touch variables.tf
-mkdir modules
-cd modules
-mkdir instances
-cd instances
-touch instances.tf
-touch outputs.tf
-touch variables.tf
-cd ..
-mkdir storage
-cd storage
-touch storage.tf
-touch outputs.tf
-touch variables.tf
-cd
-
-cat > variables.tf <<EOF_CP
-variable "region" {
- default = "$REGION"
-}
-
-variable "zone" {
- default = "$ZONE"
-}
-
-variable "project_id" {
- default = "$PROJECT_ID"
-}
-EOF_CP
-
-cat > main.tf <<EOF_CP
+cat > main.tf <<EOF
 terraform {
   required_providers {
     google = {
-      source = "hashicorp/google"
-      version = "4.53.0"
+      source  = "hashicorp/google"
+      version = "6.50.0"
     }
   }
 }
 
 provider "google" {
-  project     = var.project_id
-  region      = var.region
-  zone        = var.zone
+  project = var.project_id
+  region  = var.region
+  zone    = var.zone
 }
 
 module "instances" {
-  source     = "./modules/instances"
+  source = "./modules/instances"
 }
-EOF_CP
+EOF
 
-terraform init 
-
-cd modules/instances/
-
-cat > instances.tf <<EOF_CP
+cat > modules/instances/instances.tf <<EOF
 resource "google_compute_instance" "tf-instance-1" {
   name         = "tf-instance-1"
-  machine_type = "n1-standard-1"
-  zone         = "$ZONE"
+  machine_type = "$MACHINE_1"
 
   boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
+    initialize_params { image = "$IMAGE_1" }
   }
 
-  network_interface {
- network = "default"
-  }
+  network_interface { network = "default" }
+
   metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
+    #!/bin/bash
+  EOT
   allow_stopping_for_update = true
 }
 
 resource "google_compute_instance" "tf-instance-2" {
   name         = "tf-instance-2"
-  machine_type = "n1-standard-1"
-  zone         = "$ZONE"
+  machine_type = "$MACHINE_2"
 
   boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
+    initialize_params { image = "$IMAGE_2" }
   }
 
-  network_interface {
- network = "default"
-  }
+  network_interface { network = "default" }
+
   metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
+    #!/bin/bash
+  EOT
   allow_stopping_for_update = true
 }
-EOF_CP
+EOF
 
-cd ~
-
-terraform import module.instances.google_compute_instance.tf-instance-1 $INSTANCE_ID_1
-terraform import module.instances.google_compute_instance.tf-instance-2 $INSTANCE_ID_2
-
-terraform plan
-terraform apply --auto-approve
-
-cd modules/storage/
-
-cat > storage.tf <<EOF_CP
-resource "google_storage_bucket" "storage-bucket" {
-  name          = "$BUCKET"
-  location      = "US"
-  force_destroy = true
+cat > modules/storage/storage.tf <<EOF
+resource "google_storage_bucket" "tf_bucket" {
+  name                        = "$BUCKET_NAME"
+  location                    = "US"
+  force_destroy               = true
   uniform_bucket_level_access = true
 }
-EOF_CP
+EOF
 
-cd ~
+# Task 1 / Task 2
+terraform fmt -recursive
+terraform init -upgrade
+terraform validate
 
-cat > main.tf <<EOF_CP
-terraform {
-  required_providers {
-    google = {
-      source = "hashicorp/google"
-      version = "4.53.0"
-    }
-  }
-}
+terraform import -input=false   'module.instances.google_compute_instance.tf-instance-1'   "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-1"
 
-provider "google" {
-  project     = var.project_id
-  region      = var.region
-  zone        = var.zone
-}
+terraform import -input=false   'module.instances.google_compute_instance.tf-instance-2'   "projects/$PROJECT_ID/zones/$ZONE/instances/tf-instance-2"
 
-module "instances" {
-  source     = "./modules/instances"
-}
+# Task 3: manage the supplied bucket, then migrate state to GCS.
+cat >> main.tf <<'EOF'
 
 module "storage" {
-  source     = "./modules/storage"
+  source = "./modules/storage"
 }
-EOF_CP
+EOF
 
+terraform fmt -recursive
 terraform init
-terraform apply --auto-approve
-
-cat > main.tf <<EOF_CP
-terraform {
-  backend "gcs" {
-    bucket  = "$BUCKET"
-    prefix  = "terraform/state"
-  }
-  required_providers {
-    google = {
-      source = "hashicorp/google"
-      version = "4.53.0"
-    }
-  }
-}
-
-provider "google" {
-  project     = var.project_id
-  region      = var.region
-  zone        = var.zone
-}
-
-module "instances" {
-  source     = "./modules/instances"
-}
-
-module "storage" {
-  source     = "./modules/storage"
-}
-EOF_CP
-
-echo "yes" | terraform init
-
-cd modules/instances/
-
-cat > instances.tf <<EOF_CP
-resource "google_compute_instance" "tf-instance-1" {
-  name         = "tf-instance-1"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
- network = "default"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-
-resource "google_compute_instance" "tf-instance-2" {
-  name         = "tf-instance-2"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
- network = "default"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-
-resource "google_compute_instance" "$INSTANCE" {
-  name         = "$INSTANCE"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
- network = "default"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-EOF_CP
-cd ~
-
-terraform init
-terraform apply --auto-approve
-
-terraform taint module.instances.google_compute_instance.$INSTANCE
+terraform import -input=false   'module.storage.google_storage_bucket.tf_bucket'   "$BUCKET_NAME" || true
 
 terraform plan
-terraform apply --auto-approve
+terraform apply -auto-approve
 
-cd modules/instances/
-
-cat > instances.tf <<EOF_CP
-resource "google_compute_instance" "tf-instance-1" {
-  name         = "tf-instance-1"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
- network = "default"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-
-resource "google_compute_instance" "tf-instance-2" {
-  name         = "tf-instance-2"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
- network = "default"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-EOF_CP
-
-cd ~
-terraform apply --auto-approve
-
-cat > main.tf <<EOF_CP
-terraform {
+python3 - <<PY
+from pathlib import Path
+p = Path("main.tf")
+s = p.read_text()
+old = '''terraform {
+  required_providers {'''
+new = '''terraform {
   backend "gcs" {
-    bucket  = "$BUCKET"
-    prefix  = "terraform/state"
+    bucket = "$BUCKET_NAME"
+    prefix = "terraform/state"
   }
-  required_providers {
-    google = {
-      source = "hashicorp/google"
-      version = "4.53.0"
-    }
+
+  required_providers {'''
+if old not in s:
+    raise SystemExit("Could not locate Terraform provider block.")
+p.write_text(s.replace(old, new, 1))
+PY
+
+terraform fmt -recursive
+terraform init -migrate-state -force-copy
+
+# Task 4: both existing VMs -> e2-standard-2, plus third VM.
+cat >> modules/instances/instances.tf <<EOF
+
+resource "google_compute_instance" "$INSTANCE_NAME" {
+  name         = "$INSTANCE_NAME"
+  machine_type = "e2-standard-2"
+  zone         = "$ZONE"
+
+  boot_disk {
+    initialize_params { image = "$IMAGE_1" }
   }
-}
 
-provider "google" {
-  project     = var.project_id
-  region      = var.region
-  zone        = var.zone
+  network_interface { network = "default" }
+  allow_stopping_for_update = true
 }
+EOF
 
-module "instances" {
-  source     = "./modules/instances"
-}
+python3 - <<PY
+from pathlib import Path
+p = Path("modules/instances/instances.tf")
+s = p.read_text()
+s = s.replace('machine_type = "$MACHINE_1"', 'machine_type = "e2-standard-2"', 1)
+s = s.replace('machine_type = "$MACHINE_2"', 'machine_type = "e2-standard-2"', 1)
+p.write_text(s)
+PY
 
-module "storage" {
-  source     = "./modules/storage"
-}
+terraform fmt -recursive
+terraform validate
+terraform plan
+terraform apply -auto-approve
+
+echo
+echo "============================================================"
+echo "TASK 4 COMPLETE."
+echo "Click Check my progress for Task 4, then press ENTER here."
+echo "============================================================"
+read -r
+
+# Task 5: remove third VM from configuration and apply.
+python3 - <<PY
+from pathlib import Path
+p = Path("modules/instances/instances.tf")
+s = p.read_text()
+marker = 'resource "google_compute_instance" "$INSTANCE_NAME"'
+i = s.find(marker)
+if i < 0:
+    raise SystemExit("Third instance block not found.")
+p.write_text(s[:i].rstrip() + "\n")
+PY
+
+terraform fmt -recursive
+terraform plan
+terraform apply -auto-approve
+
+# Task 6: Registry Network Module 10.0.0.
+cat >> main.tf <<EOF
 
 module "vpc" {
-    source  = "terraform-google-modules/network/google"
-    version = "~> 6.0.0"
+  source  = "terraform-google-modules/network/google"
+  version = "10.0.0"
 
-    project_id   = "$PROJECT_ID"
-    network_name = "$VPC"
-    routing_mode = "GLOBAL"
+  project_id   = var.project_id
+  network_name = "$VPC_NAME"
+  routing_mode = "GLOBAL"
 
-    subnets = [
-        {
-            subnet_name           = "subnet-01"
-            subnet_ip             = "10.10.10.0/24"
-            subnet_region         = "$REGION"
-        },
-        {
-            subnet_name           = "subnet-02"
-            subnet_ip             = "10.10.20.0/24"
-            subnet_region         = "$REGION"
-            subnet_private_access = "true"
-            subnet_flow_logs      = "true"
-            description           = "Subnet with private access and flow logs enabled"
-        },
-    ]
-}
-EOF_CP
-
-terraform init
-terraform apply --auto-approve
-
-cd modules/instances/
-cat > instances.tf <<EOF_CP
-resource "google_compute_instance" "tf-instance-1" {
-  name         = "tf-instance-1"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
+  subnets = [
+    {
+      subnet_name   = "subnet-01"
+      subnet_ip     = "10.10.10.0/24"
+      subnet_region = var.region
+    },
+    {
+      subnet_name   = "subnet-02"
+      subnet_ip     = "10.10.20.0/24"
+      subnet_region = var.region
     }
-  }
+  ]
+}
+EOF
 
-  network_interface {
-    network = "$VPC"
+terraform fmt -recursive
+terraform init -upgrade
+terraform validate
+terraform plan
+terraform apply -auto-approve
+
+# Connect instance-1 -> subnet-01 and instance-2 -> subnet-02.
+python3 - <<PY
+from pathlib import Path
+p = Path("modules/instances/instances.tf")
+s = p.read_text()
+old = '''network_interface { network = "default" }'''
+new1 = '''network_interface {
+    network    = "$VPC_NAME"
     subnetwork = "subnet-01"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-
-resource "google_compute_instance" "tf-instance-2" {
-  name         = "tf-instance-2"
-  machine_type = "e2-standard-2"
-  zone         = "$ZONE"
-
-  boot_disk {
-    initialize_params {
-      image = "debian-cloud/debian-12"
-    }
-  }
-
-  network_interface {
-    network = "$VPC"
+  }'''
+new2 = '''network_interface {
+    network    = "$VPC_NAME"
     subnetwork = "subnet-02"
-  }
-  metadata_startup_script = <<-EOT
-        #!/bin/bash
-    EOT
-  allow_stopping_for_update = true
-}
-EOF_CP
+  }'''
+if s.count(old) < 2:
+    raise SystemExit("Expected two default network_interface blocks.")
+s = s.replace(old, new1, 1)
+s = s.replace(old, new2, 1)
+p.write_text(s)
+PY
 
-cd ~
-terraform init
-terraform apply --auto-approve
+terraform fmt -recursive
+terraform validate
+terraform plan
+terraform apply -auto-approve
 
-cat > main.tf <<EOF_CP
-terraform {
-  backend "gcs" {
-    bucket  = "$BUCKET"
-    prefix  = "terraform/state"
-  }
-  required_providers {
-    google = {
-      source = "hashicorp/google"
-      version = "4.53.0"
-    }
-  }
-}
+echo
+echo "============================================================"
+echo "TASK 6 COMPLETE."
+echo "Click Check my progress for Task 6, then press ENTER here."
+echo "============================================================"
+read -r
 
-provider "google" {
-  project     = var.project_id
-  region      = var.region
-  zone        = var.zone
-}
+# Task 7: HTTP firewall.
+cat >> main.tf <<EOF
 
-module "instances" {
-  source     = "./modules/instances"
-}
-
-module "storage" {
-  source     = "./modules/storage"
-}
-
-module "vpc" {
-    source  = "terraform-google-modules/network/google"
-    version = "~> 6.0.0"
-
-    project_id   = "$PROJECT_ID"
-    network_name = "$VPC"
-    routing_mode = "GLOBAL"
-
-    subnets = [
-        {
-            subnet_name           = "subnet-01"
-            subnet_ip             = "10.10.10.0/24"
-            subnet_region         = "$REGION"
-        },
-        {
-            subnet_name           = "subnet-02"
-            subnet_ip             = "10.10.20.0/24"
-            subnet_region         = "$REGION"
-            subnet_private_access = "true"
-            subnet_flow_logs      = "true"
-            description           = "Subnet with private access and flow logs enabled"
-        },
-    ]
-}
-
-resource "google_compute_firewall" "tf-firewall"{
+resource "google_compute_firewall" "tf-firewall" {
   name    = "tf-firewall"
-  network = "projects/$PROJECT_ID/global/networks/$VPC"
+  network = "projects/$PROJECT_ID/global/networks/$VPC_NAME"
 
   allow {
     protocol = "tcp"
     ports    = ["80"]
   }
 
-  source_tags = ["web"]
   source_ranges = ["0.0.0.0/0"]
 }
-EOF_CP
+EOF
 
-terraform init
-terraform apply --auto-approve
+terraform fmt -recursive
+terraform validate
+terraform plan
+terraform apply -auto-approve
 
-print_completion
+echo
+echo "============================================================"
+echo "ALL TERRAFORM TASKS COMPLETE."
+echo "Click Check my progress for Task 7."
+echo "============================================================"
