@@ -18,3 +18,10 @@
 https://www.bulkshare.cloud/p/1OaqAFap
 
 
+## Then Execute This Command 
+
+```bash
+
+bash gsp321_solve.sh
+
+
