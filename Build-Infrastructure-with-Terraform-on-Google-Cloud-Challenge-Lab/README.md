@@ -1,4 +1,4 @@
-# Analyze Images with the Cloud Vision API: Challenge Lab
+# Build Infrastructure with Terraform on Google Cloud: Challenge Lab
 
 > ⚡ **Automated Speedrun Solution for Google Cloud Skills Boost**
 
