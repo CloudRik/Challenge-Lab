@@ -14,17 +14,27 @@ echo -e "${MAGENTA}   GCP CHALLENGE LAB: PREPARE DATA FOR ML APIS (ALL-IN-ONE SC
 echo -e "${CYAN}======================================================================${NC}"
 echo ""
 
-# Prompt inputs from user with GREEN text
+# Auto-Detect Region and Zone
+echo -e "${BLUE}Auto-detecting Region and Zone...${NC}"
+export CLUSTER_ZONE=$(gcloud compute project-info describe --format="value(commonInstanceMetadata.items[google-compute-default-zone])" 2>/dev/null)
+if [ -z "$CLUSTER_ZONE" ]; then
+    export CLUSTER_ZONE=$(gcloud config get-value compute/zone 2>/dev/null)
+fi
+if [ -z "$CLUSTER_ZONE" ]; then
+    export CLUSTER_ZONE="us-central1-a"
+fi
+
+export LOCATION_REGION=$(echo $CLUSTER_ZONE | cut -d'-' -f1,2)
+
+echo -e "${GREEN}✓ Detected Zone:${NC} $CLUSTER_ZONE"
+echo -e "${GREEN}✓ Detected Region:${NC} $LOCATION_REGION"
+echo ""
+
+# Dynamic User Inputs
 read -p "$(echo -e "${GREEN}ENTER BIGQUERY DATASET NAME (e.g., lab_116): ${NC}")" BQ_DATASET
 echo ""
 
 read -p "$(echo -e "${GREEN}ENTER BIGQUERY TABLE NAME (e.g., customers_791): ${NC}")" BQ_TABLE
-echo ""
-
-read -p "$(echo -e "${GREEN}ENTER REGION (e.g., us-central1): ${NC}")" LOCATION_REGION
-echo ""
-
-read -p "$(echo -e "${GREEN}ENTER DATAPROC CLUSTER ZONE (e.g., us-central1-a): ${NC}")" CLUSTER_ZONE
 echo ""
 
 read -p "$(echo -e "${GREEN}ENTER TASK 3 RESULT FILE NAME (e.g., task3-gcs-355.result): ${NC}")" TASK3_FILE
@@ -33,35 +43,15 @@ echo ""
 read -p "$(echo -e "${GREEN}ENTER TASK 4 RESULT FILE NAME (e.g., task4-cnl-120.result): ${NC}")" TASK4_FILE
 echo ""
 
-# Export derived & automated variables
 export MARKING_BUCKET="${DEVSHELL_PROJECT_ID}-marking"
 export CLUSTER_NAME="spark-cluster"
-
-# Display Summary
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                    CONFIGURATION SUMMARY                        ║${NC}"
-echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║ ${CYAN}Project ID:${NC} $DEVSHELL_PROJECT_ID"
-echo -e "${GREEN}║ ${CYAN}BQ Dataset / Table:${NC} $BQ_DATASET / $BQ_TABLE"
-echo -e "${GREEN}║ ${CYAN}Region / Zone:${NC} $LOCATION_REGION / $CLUSTER_ZONE"
-echo -e "${GREEN}║ ${CYAN}Marking Bucket:${NC} gs://$MARKING_BUCKET"
-echo -e "${GREEN}║ ${CYAN}Task 3 Target:${NC} $TASK3_FILE"
-echo -e "${GREEN}║ ${CYAN}Task 4 Target:${NC} $TASK4_FILE"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-
-read -p "$(echo -e "${YELLOW}Proceed with execution? (y/n): ${NC}")" confirm
-if [[ $confirm != [yY] ]]; then
-    echo -e "${RED}Setup aborted by user.${NC}"
-    exit 1
-fi
 
 echo -e "${GREEN}Starting lab setup...${NC}"
 echo ""
 
-# Basic Environment & IAM Setup
-echo -e "${BLUE}Configuring IAM permissions & Enabling APIs...${NC}"
-gcloud services enable dataflow.googleapis.com dataproc.googleapis.com speech.googleapis.com language.googleapis.com
+# Enable APIs & Setup IAM Roles
+echo -e "${BLUE}Enabling APIs and setting up IAM roles...${NC}"
+gcloud services enable dataflow.googleapis.com dataproc.googleapis.com speech.googleapis.com language.googleapis.com --quiet
 
 PROJECT_NUMBER=$(gcloud projects describe $DEVSHELL_PROJECT_ID --format="value(projectNumber)")
 
@@ -72,9 +62,6 @@ gcloud projects add-iam-policy-binding $DEVSHELL_PROJECT_ID \
 gcloud projects add-iam-policy-binding $DEVSHELL_PROJECT_ID \
     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
     --role="roles/dataflow.worker" --quiet
-
-echo -e "${GREEN}✓ APIs enabled & IAM Roles granted successfully${NC}"
-echo ""
 
 # ==========================================
 # TASK 1: RUN DATAFLOW JOB
@@ -100,11 +87,14 @@ echo -e "${GREEN}✓ Task 1 Dataflow Job submitted${NC}"
 echo ""
 
 # ==========================================
-# TASK 2: RUN MANAGED APACHE SPARK JOB
+# TASK 2: DATAPROC SPARK JOB
 # ==========================================
 echo -e "${MAGENTA}--- STARTING TASK 2: DATAPROC SPARK JOB ---${NC}"
-echo -e "${BLUE}Creating Dataproc Cluster...${NC}"
 
+# Delete broken cluster if any exists
+gcloud dataproc clusters delete $CLUSTER_NAME --region=$LOCATION_REGION --quiet 2>/dev/null || true
+
+# Create Dataproc Cluster
 gcloud dataproc clusters create $CLUSTER_NAME \
     --region=$LOCATION_REGION \
     --zone=$CLUSTER_ZONE \
@@ -114,19 +104,19 @@ gcloud dataproc clusters create $CLUSTER_NAME \
     --master-boot-disk-type=pd-standard \
     --master-boot-disk-size=100 \
     --worker-boot-disk-type=pd-standard \
-    --worker-boot-disk-size=100 \
-    --no-address
+    --worker-boot-disk-size=100
 
-echo -e "${BLUE}Copying data.txt into Cluster HDFS & Running Spark Job...${NC}"
-gcloud compute ssh ${CLUSTER_NAME}-m --zone=$CLUSTER_ZONE --quiet --command="hdfs dfs -cp gs://spls/gsp323/data.txt /data.txt"
+echo -e "${BLUE}Waiting 20 seconds for cluster services to stabilize...${NC}"
+sleep 20
 
+# Submit Spark Job directly referencing GCS file path
 gcloud dataproc jobs submit spark \
     --cluster=$CLUSTER_NAME \
     --region=$LOCATION_REGION \
     --class=org.apache.spark.examples.SparkPageRank \
     --jars=file:///usr/lib/spark/examples/jars/spark-examples.jar \
     --max-failures-per-hour=1 \
-    -- /data.txt
+    -- gs://spls/gsp323/data.txt
 
 echo -e "${GREEN}✓ Task 2 Spark Job executed successfully${NC}"
 echo ""
@@ -181,7 +171,7 @@ gcloud storage cp $TASK4_FILE gs://$MARKING_BUCKET/$TASK4_FILE
 echo -e "${GREEN}✓ Task 4 Natural Language API completed & uploaded${NC}"
 echo ""
 
-# Completion Banner
+# Completion Message
 echo -e "${GREEN}======================================================================${NC}"
-echo -e "${MAGENTA}   🎉 LAB EXECUTED SUCCESSFULLY! WAIT 2 MINS FOR DATAFLOW TO FINISH   ${NC}"
+echo -e "${MAGENTA}   🎉 LAB EXECUTED SUCCESSFULLY! CHECK YOUR SCORE ON LAB PORTAL   ${NC}"
 echo -e "${GREEN}======================================================================${NC}"
