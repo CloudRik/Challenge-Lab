@@ -9,7 +9,11 @@
 Google Cloud Shell mein ye command paste karo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/CloudRik/Google-Skill-Arcade/main/solution.sh -o solution.sh && chmod +x solution.sh && ./solution.sh
+
+curl -LO https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Automate-Data-Capture-at-Scale-with-Document-AI-Challenge-Lab/autoscript.sh
+chmod +x autoscript.sh
+./autoscript.sh
+
 ```
 
 <br>
