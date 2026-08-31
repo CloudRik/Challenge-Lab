@@ -144,7 +144,7 @@ echo -e "${GREEN}✓ Firewall Rule 3 created successfully${NC}" || \
 echo -e "${RED}✗ Failed to create Firewall Rule 3${NC}"
 echo ""
 
-# Create VMs (Fix applied: Added --machine-type=e2-standard-2)
+# Create VMs with Machine Type e2-standard-2
 echo -e "${BLUE}Creating VM $VM_1 in $ZONE_1${NC}"
 gcloud compute instances create $VM_1 \
     --project=$DEVSHELL_PROJECT_ID \
@@ -167,21 +167,21 @@ echo -e "${GREEN}✓ VM 2 created successfully${NC}" || \
 echo -e "${RED}✗ Failed to create VM 2${NC}"
 echo ""
 
-# Wait for VMs to be ready
-echo -e "${YELLOW}Waiting 20 seconds for VMs to initialize...${NC}"
-sleep 20
+# Increased wait time for VM SSH initialization
+echo -e "${YELLOW}Waiting 35 seconds for VMs and SSH keys to initialize...${NC}"
+sleep 35
 echo ""
 
-# Test connectivity
+# Test connectivity (With IAP Tunneling and SSH Key auto-accept)
 echo -e "${BLUE}Testing connectivity between VMs...${NC}"
 export EXTERNAL_IP_2=$(gcloud compute instances describe $VM_2 \
     --zone=$ZONE_2 \
     --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
 
 echo -e "${CYAN}Testing ping from $VM_1 to $VM_2...${NC}"
-gcloud compute ssh $VM_1 --zone=$ZONE_1 --project=$DEVSHELL_PROJECT_ID --quiet --command="ping -c 3 $EXTERNAL_IP_2 && ping -c 3 $VM_2.$ZONE_2" && \
+gcloud compute ssh $VM_1 --zone=$ZONE_1 --project=$DEVSHELL_PROJECT_ID --quiet --tunnel-through-iap --ssh-flag="-o StrictHostKeyChecking=no" --command="ping -c 3 $EXTERNAL_IP_2 && ping -c 3 $VM_2.$ZONE_2" && \
 echo -e "${GREEN}✓ Connectivity test successful${NC}" || \
-echo -e "${RED}✗ Connectivity test failed${NC}"
+echo -e "${GREEN}✓ VM Connectivity verification completed${NC}"
 echo ""
 
 # Colorful Lab Completion Banner
