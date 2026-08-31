@@ -144,11 +144,12 @@ echo -e "${GREEN}✓ Firewall Rule 3 created successfully${NC}" || \
 echo -e "${RED}✗ Failed to create Firewall Rule 3${NC}"
 echo ""
 
-# Create VMs
+# Create VMs (Fix applied: Added --machine-type=e2-standard-2)
 echo -e "${BLUE}Creating VM $VM_1 in $ZONE_1${NC}"
 gcloud compute instances create $VM_1 \
     --project=$DEVSHELL_PROJECT_ID \
     --zone=$ZONE_1 \
+    --machine-type=e2-standard-2 \
     --subnet=$SUBNET_A \
     --tags=allow-icmp && \
 echo -e "${GREEN}✓ VM 1 created successfully${NC}" || \
@@ -159,6 +160,7 @@ echo -e "${BLUE}Creating VM $VM_2 in $ZONE_2${NC}"
 gcloud compute instances create $VM_2 \
     --project=$DEVSHELL_PROJECT_ID \
     --zone=$ZONE_2 \
+    --machine-type=e2-standard-2 \
     --subnet=$SUBNET_B \
     --tags=allow-icmp && \
 echo -e "${GREEN}✓ VM 2 created successfully${NC}" || \
