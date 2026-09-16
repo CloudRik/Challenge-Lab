@@ -10,7 +10,7 @@ Google Cloud Shell mein ye command paste karo:
 
 ```bash
 
-curl -sL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build-a-Secure-Google-Cloud-Network-Challenge-Lab/script.sh -o lab_script.sh && chmod +x lab_script.sh && ./lab_script.sh
+curl -sL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build-a-Secure-Google-Cloud-Network-Challenge-Lab/script.sh -o script.sh && chmod +x script.sh && ./script.sh
 
 ```
 
