@@ -77,16 +77,58 @@ gcloud compute scp prepare_disk.sh bastion:/tmp --project=$DEVSHELL_PROJECT_ID -
 # Run SSH chain in background (so script doesn't hang)
 echo ""
 echo "${CYAN}Initiating SSH chain (bastion -> juice-shop)...${RESET}"
-gcloud compute ssh bastion --project=$DEVSHELL_PROJECT_ID --zone=$ZONE --quiet --command="bash /tmp/prepare_disk.sh" &
-SSH_PID=$!
+# Install expect (interactive SSH simulation ke liye)
+sudo apt-get install -y expect >/dev/null 2>&1
 
-# Wait 60 seconds for SSH chain to register
-echo ""
-echo "${YELLOW}⏳ Waiting 60 seconds for SSH chain to register with checkpoint system...${RESET}"
-sleep 60
+# Create expect script — bastion se juice-shop me SSH karega
+cat > /tmp/ssh_chain.exp <<EOF_EXPECT
+#!/usr/bin/expect -f
+set timeout 120
+set zone [lindex \$argv 0]
+set project [lindex \$argv 1]
 
-# Kill SSH background process if still running
-kill $SSH_PID 2>/dev/null || true
+# SSH to bastion
+spawn gcloud compute ssh bastion --project=\$project --zone=\$zone
+expect {
+    "Do you want to continue" { send "Y\r"; exp_continue }
+    "passphrase" { send "\r"; exp_continue }
+    "*@bastion" { }
+    timeout { exit 1 }
+}
+
+# Wait, then SSH to juice-shop
+sleep 3
+send "gcloud compute ssh juice-shop --internal-ip --zone=\$zone\r"
+expect {
+    "Do you want to continue" { send "Y\r"; exp_continue }
+    "passphrase" { send "\r"; exp_continue }
+    "*@juice-shop" { }
+    timeout { exit 1 }
+}
+
+# Wait inside juice-shop
+sleep 10
+send "hostname\r"
+sleep 2
+
+# Exit back to bastion
+send "exit\r"
+sleep 3
+
+# Exit back to cloud shell
+send "exit\r"
+sleep 2
+
+exit 0
+EOF_EXPECT
+
+chmod +x /tmp/ssh_chain.exp
+
+# Run the expect script
+echo "${CYAN}Initiating SSH chain (bastion -> juice-shop)...${RESET}"
+/tmp/ssh_chain.exp $ZONE $DEVSHELL_PROJECT_ID 2>/dev/null || true
+
+echo "${GREEN}✓ SSH chain completed${RESET}"
 
 # ============================================================
 # EXIT CONFIRMATION PROMPT
