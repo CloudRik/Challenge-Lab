@@ -23,9 +23,7 @@
 
 ```bash
 
-curl -sL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Optimize-Costs-for-Google-Kubernetes-Engine-Challenge-Lab/script.sh -o
-script.sh && chmod +x script.sh &&
-./script.sh
+curl -sL https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Optimize-Costs-for-Google-Kubernetes-Engine-Challenge-Lab/script.sh -o script.sh && chmod +x script.sh && ./script.sh
 
 
 ```
