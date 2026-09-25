@@ -17,9 +17,9 @@
 <br>
 
 
- 📁   [On the Rise Bakery Business Challenge (1).xlsx](https://github.com/user-attachments/files/32669609/On.the.Rise.Bakery.Business.Challenge.1.xlsx)
+ 📂   [On the Rise Bakery Business Challenge (1).xlsx](https://github.com/user-attachments/files/32669609/On.the.Rise.Bakery.Business.Challenge.1.xlsx)
 
- 📁      [Staff Roles (1).pptx](https://github.com/user-attachments/files/32669614/Staff.Roles.1.pptx)
+ 📂      [Staff Roles (1).pptx](https://github.com/user-attachments/files/32669614/Staff.Roles.1.pptx)
 
 <br>
 
