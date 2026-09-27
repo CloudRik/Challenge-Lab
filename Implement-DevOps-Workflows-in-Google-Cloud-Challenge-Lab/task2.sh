@@ -3,7 +3,6 @@
 # ============================================================
 # Task 2 + Task 3 — Connect Git Repo & Create Cloud Build Triggers
 # Fully Dynamic | Colorful | No Hardcoding
-# Lab: GSP330 (Implement DevOps Workflows in Google Cloud)
 # ============================================================
 
 # ---------- COLORS ----------
@@ -22,12 +21,18 @@ echo -e "${MAGENTA}${BOLD}   🚀 Task 2 + 3 — Git Repo & Cloud Build Triggers
 echo -e "${CYAN}=====================================================${RESET}"
 echo ""
 
-# ---------- USER INPUTS (GREEN) ----------
+# ---------- USER INPUTS ----------
 echo -e "${GREEN}${BOLD}👉 Please provide the values from your lab page:${RESET}"
 echo ""
-read -p "$(echo -e ${GREEN}'   Enter REGION (e.g. us-central1): '${RESET})" REGION
-read -p "$(echo -e ${GREEN}'   Enter ZONE (e.g. us-central1-c): '${RESET})" ZONE
-read -p "$(echo -e ${GREEN}'   Enter Git Server IP (from Lab setup panel): '${RESET})" GIT_SERVER_IP
+
+echo -e "${GREEN}   Enter REGION (e.g. us-central1): ${RESET}"
+read REGION
+
+echo -e "${GREEN}   Enter ZONE (e.g. us-central1-c): ${RESET}"
+read ZONE
+
+echo -e "${GREEN}   Enter Git Server IP (from Lab setup panel): ${RESET}"
+read GIT_SERVER_IP
 
 echo ""
 echo -e "${YELLOW}🔍 Confirming values:${RESET}"
@@ -35,7 +40,10 @@ echo -e "   Region         : ${BOLD}$REGION${RESET}"
 echo -e "   Zone           : ${BOLD}$ZONE${RESET}"
 echo -e "   Git Server IP  : ${BOLD}$GIT_SERVER_IP${RESET}"
 echo ""
-read -p "$(echo -e ${YELLOW}'✅ Confirm? (y/n): '${RESET})" CONFIRM
+
+echo -e "${YELLOW}✅ Confirm? (y/n): ${RESET}"
+read CONFIRM
+
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
   echo -e "${RED}❌ Aborted.${RESET}"
   exit 1
@@ -51,16 +59,14 @@ echo -e "${CYAN}=====================================================${RESET}"
 echo -e "${MAGENTA}${BOLD}   📦 TASK 2 — Connect to the Git repository         ${RESET}"
 echo -e "${CYAN}=====================================================${RESET}"
 
-# Step 1: Copy sample code
 echo ""
 echo -e "${CYAN}🔹 Step 2.1: Copying sample code into ~/sample-app...${RESET}"
 cd ~
 gcloud storage cp -r gs://spls/gsp330/sample-app/* sample-app
 echo -e "${GREEN}✅ Sample code copied.${RESET}"
 
-# Step 2: Replace placeholders
 echo ""
-echo -e "${CYAN}🔹 Step 2.2: Replacing <your-region>, <your-zone>, <version> in yaml files...${RESET}"
+echo -e "${CYAN}🔹 Step 2.2: Replacing placeholders in yaml files...${RESET}"
 for file in sample-app/cloudbuild-dev.yaml sample-app/cloudbuild.yaml; do
   sed -i "s/<your-region>/${REGION}/g" "$file"
   sed -i "s/<your-zone>/${ZONE}/g" "$file"
@@ -68,7 +74,6 @@ for file in sample-app/cloudbuild-dev.yaml sample-app/cloudbuild.yaml; do
 done
 echo -e "${GREEN}✅ YAML files updated.${RESET}"
 
-# Step 3: Init git repo, push to master
 echo ""
 echo -e "${CYAN}🔹 Step 2.3: Initializing Git repo & pushing to master...${RESET}"
 cd ~/sample-app
@@ -80,14 +85,12 @@ git add . && git commit -q -m "initial commit"
 git push -u http://giteaadmin:GiteaPassword123@${GIT_SERVER_IP}:3000/giteaadmin/sample-app.git master
 echo -e "${GREEN}✅ Pushed to master branch.${RESET}"
 
-# Step 4: Create dev branch & push
 echo ""
 echo -e "${CYAN}🔹 Step 2.4: Creating 'dev' branch & pushing...${RESET}"
 git checkout -b dev -q
 git push -u http://giteaadmin:GiteaPassword123@${GIT_SERVER_IP}:3000/giteaadmin/sample-app.git dev
 echo -e "${GREEN}✅ Pushed to dev branch.${RESET}"
 
-# Step 5: Verify
 echo ""
 echo -e "${CYAN}🔹 Step 2.5: Verifying branches...${RESET}"
 git branch -a
@@ -102,7 +105,6 @@ echo -e "${CYAN}=====================================================${RESET}"
 export PROJECT_ID=$(gcloud config get-value project)
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
 
-# Step 1: Create prod trigger
 echo ""
 echo -e "${CYAN}🔹 Step 3.1: Creating trigger 'sample-app-prod-deploy'...${RESET}"
 gcloud builds triggers create manual \
@@ -117,7 +119,6 @@ gcloud builds triggers create manual \
   --substitutions="_REGION=${REGION},_ZONE=${ZONE}" 2>/dev/null \
   || echo -e "${YELLOW}⚠ Trigger may already exist or needs manual repo connection.${RESET}"
 
-# Step 2: Create dev trigger
 echo ""
 echo -e "${CYAN}🔹 Step 3.2: Creating trigger 'sample-app-dev-deploy'...${RESET}"
 gcloud builds triggers create manual \
@@ -132,7 +133,6 @@ gcloud builds triggers create manual \
   --substitutions="_REGION=${REGION},_ZONE=${ZONE}" 2>/dev/null \
   || echo -e "${YELLOW}⚠ Trigger may already exist or needs manual repo connection.${RESET}"
 
-# Verify triggers
 echo ""
 echo -e "${CYAN}🔹 Step 3.3: Verifying triggers...${RESET}"
 gcloud builds triggers list --region=${REGION} --format="table(name,resourceName,github.name,github.push.branch)"
