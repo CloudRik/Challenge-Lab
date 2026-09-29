@@ -287,40 +287,41 @@ run_task() {
         # PUBLIC OBJECT
         # ====================================================
 
-        PUBLIC_OBJECT)
+ PUBLIC_OBJECT)
 
-            echo "Finding object in Bucket2..."
+    echo "Finding object in Bucket2..."
 
-            if ! gcloud storage buckets describe \
-                "gs://$BUCKET2" >/dev/null 2>&1; then
-                die "Bucket2 does not exist: gs://$BUCKET2"
-            fi
+    if ! gcloud storage buckets describe \
+        "gs://$BUCKET2" >/dev/null 2>&1; then
+        die "Bucket2 does not exist: gs://$BUCKET2"
+    fi
 
-            mapfile -t OBJECTS < <(
-                gcloud storage ls "gs://$BUCKET2/" 2>/dev/null
-            )
+    mapfile -t OBJECTS < <(
+        gcloud storage ls "gs://$BUCKET2/" 2>/dev/null
+    )
 
-            if [[ ${#OBJECTS[@]} -eq 0 ]]; then
-                die "No object found in Bucket2."
-            fi
+    if [[ ${#OBJECTS[@]} -eq 0 ]]; then
+        die "No object found in Bucket2."
+    fi
 
-            if [[ ${#OBJECTS[@]} -gt 1 ]]; then
-                echo "Objects found:"
-                printf '  %s\n' "${OBJECTS[@]}"
-                die "More than one object exists; automatic selection would be unsafe."
-            fi
+    if [[ ${#OBJECTS[@]} -gt 1 ]]; then
+        echo "Objects found:"
+        printf '  %s\n' "${OBJECTS[@]}"
+        die "More than one object exists; automatic selection would be unsafe."
+    fi
 
-            OBJECT_URL="${OBJECTS[0]}"
+    OBJECT_URL="${OBJECTS[0]}"
 
-            echo "Object detected:"
-            echo "  $OBJECT_URL"
+    echo "Object detected:"
+    echo "  $OBJECT_URL"
 
-            gcloud storage objects update \
-                "$OBJECT_URL" \
-                --add-acl-grant=entity=allUsers,role=READER
+    # ✅ FIX: Use IAM policy instead of object ACL
+    gcloud storage buckets add-iam-policy-binding "gs://$BUCKET2" \
+        --member=allUsers \
+        --role=roles/storage.objectViewer
 
-            echo "✅ Object is publicly readable."
-            ;;
+    echo "✅ Object is publicly readable."
+    ;;
 
         # ====================================================
         # ADD FILE TO BUCKET3
