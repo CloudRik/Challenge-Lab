@@ -1,6 +1,7 @@
 #!/bin/bash
 # ============================================================
 #  Challenge Lab — Task 1 + Task 2 (Error-Free, Interactive)
+#  FIXED VERSION — With MIG creation + HTTPS Frontend
 # ============================================================
 
 # Helper: run command, ignore if already exists
@@ -13,8 +14,8 @@ echo "  Lab Setup — User Inputs"
 echo "=========================================="
 echo ""
 
-read -p "Region A (e.g., us-east1): " REGION_A
-read -p "Region B (e.g., us-east4): " REGION_B
+read -p "Region A (e.g., us-east4): " REGION_A
+read -p "Region B (e.g., europe-west1): " REGION_B
 read -p "MIG Name (Task 1, e.g., mig-proxy-internal): " MIG_T1
 read -p "Template Name (Task 1, e.g., template-proxy-internal): " TEMPLATE_T1
 read -p "Network Tag (Task 1, e.g., tag-proxy-internal): " TAG_T1
@@ -29,6 +30,8 @@ read -p "MIG Name Region B (Task 2, e.g., mig-alb-api-b): " MIG_B
 read -p "Template Name (Task 2, e.g., template-alb-api): " TEMPLATE_T2
 read -p "Health Check Name (Task 2, e.g., http-check-alb): " HC_T2
 read -p "Backend Service Name (Task 2, e.g., service-alb-global): " BACKEND_T2
+read -p "Static IP Name Global (Task 2, e.g., ip-alb-global): " IP_T2
+read -p "SSL Cert Name (Task 2, e.g., cert-self-signed): " CERT_T2
 
 echo ""
 echo "================================"
@@ -48,6 +51,8 @@ echo "  MIG_B         = $MIG_B"
 echo "  TEMPLATE_T2   = $TEMPLATE_T2"
 echo "  HC_T2         = $HC_T2"
 echo "  BACKEND_T2    = $BACKEND_T2"
+echo "  IP_T2         = $IP_T2"
+echo "  CERT_T2       = $CERT_T2"
 echo "================================"
 read -p "ENTER to continue (Ctrl+C to cancel)..."
 echo ""
@@ -71,14 +76,40 @@ run_safe gcloud compute addresses create $IP_T1 \
   --purpose=SHARED_LOADBALANCER_VIP --quiet
 
 # ============================================================
-#  TASK 1 — PART 2: Regional Health Check (IMPORTANT FIX)
+#  TASK 1 — PART 2: Instance Template + MIG (CRITICAL FIX)
+# ============================================================
+echo ">>> TASK 1: Instance Template for Internal MIG"
+run_safe gcloud compute instance-templates create $TEMPLATE_T1 \
+  --network=default --subnet=default \
+  --region=$REGION_B \
+  --tags=$TAG_T1 \
+  --machine-type=e2-medium \
+  --image-family=debian-12 --image-project=debian-cloud \
+  --metadata=startup-script='#! /bin/bash
+  apt-get update
+  apt-get install -y nginx
+  service nginx restart' --quiet
+
+echo ">>> TASK 1: Regional MIG"
+run_safe gcloud compute instance-groups managed create $MIG_T1 \
+  --template=$TEMPLATE_T1 \
+  --size=1 \
+  --region=$REGION_B --quiet
+
+echo ">>> TASK 1: Set Named Port tcp80:80"
+run_safe gcloud compute instance-groups managed set-named-ports $MIG_T1 \
+  --named-ports=tcp80:80 \
+  --region=$REGION_B --quiet
+
+# ============================================================
+#  TASK 1 — PART 3: Regional Health Check
 # ============================================================
 echo ">>> TASK 1: Regional TCP Health Check"
 run_safe gcloud compute health-checks create tcp $HC_T1 \
   --region=$REGION_B --port=80 --quiet
 
 # ============================================================
-#  TASK 1 — PART 3: Regional Backend Service (INTERNAL_MANAGED)
+#  TASK 1 — PART 4: Regional Backend Service
 # ============================================================
 echo ">>> TASK 1: Regional Backend Service"
 run_safe gcloud compute backend-services create $BACKEND_T1 \
@@ -92,7 +123,7 @@ run_safe gcloud compute backend-services add-backend $BACKEND_T1 \
   --region=$REGION_B --quiet
 
 # ============================================================
-#  TASK 1 — PART 4: Forwarding Rule (Port 110)
+#  TASK 1 — PART 5: Forwarding Rule (Port 110)
 # ============================================================
 echo ">>> TASK 1: Forwarding Rule on port $FWD_PORT"
 run_safe gcloud compute forwarding-rules create $RULE_T1 \
@@ -103,7 +134,7 @@ run_safe gcloud compute forwarding-rules create $RULE_T1 \
   --backend-service=$BACKEND_T1 --quiet
 
 # ============================================================
-#  TASK 1 — PART 5: Client VM
+#  TASK 1 — PART 6: Client VM
 # ============================================================
 echo ">>> TASK 1: Creating Client VM"
 run_safe gcloud compute instances create vm-client-internal \
@@ -113,7 +144,22 @@ run_safe gcloud compute instances create vm-client-internal \
   --tags=allow-ssh --quiet
 
 # ============================================================
-#  TASK 2 — PART 1: Two Regional MIGs (Global ALB)
+#  TASK 2 — PART 1: Instance Template (CRITICAL FIX)
+# ============================================================
+echo ">>> TASK 2: Instance Template for Global MIGs"
+run_safe gcloud compute instance-templates create $TEMPLATE_T2 \
+  --network=default --subnet=default \
+  --region=$REGION_A \
+  --tags=http-server \
+  --machine-type=e2-medium \
+  --image-family=debian-12 --image-project=debian-cloud \
+  --metadata=startup-script='#! /bin/bash
+  apt-get update
+  apt-get install -y nginx
+  service nginx restart' --quiet
+
+# ============================================================
+#  TASK 2 — PART 2: Two Regional MIGs
 # ============================================================
 echo ">>> TASK 2: Creating MIG in Region A"
 run_safe gcloud compute instance-groups managed create $MIG_A \
@@ -130,7 +176,7 @@ run_safe gcloud compute instance-groups managed set-named-ports $MIG_B \
   --named-ports=http80:80 --region=$REGION_B --quiet
 
 # ============================================================
-#  TASK 2 — PART 2: Firewall for Global ALB
+#  TASK 2 — PART 3: Firewall for Global ALB
 # ============================================================
 echo ">>> TASK 2: Firewall for Global ALB"
 run_safe gcloud compute firewall-rules create fw-allow-health-check-and-proxy \
@@ -139,7 +185,7 @@ run_safe gcloud compute firewall-rules create fw-allow-health-check-and-proxy \
   --target-tags=http-server --rules=tcp:80 --quiet
 
 # ============================================================
-#  TASK 2 — PART 3: Global Health Check + Backend
+#  TASK 2 — PART 4: Global Health Check + Backend
 # ============================================================
 echo ">>> TASK 2: Global HTTP Health Check"
 run_safe gcloud compute health-checks create http $HC_T2 \
@@ -160,12 +206,39 @@ run_safe gcloud compute backend-services add-backend $BACKEND_T2 \
   --instance-group=$MIG_B --instance-group-region=$REGION_B \
   --balancing-mode=RATE --max-rate-per-instance=1 --global --quiet
 
+# ============================================================
+#  TASK 2 — PART 5: HTTPS Frontend (CRITICAL FIX)
+# ============================================================
+echo ">>> TASK 2: Reserve Global Static IP"
+run_safe gcloud compute addresses create $IP_T2 --global --quiet
+
+echo ">>> TASK 2: Generate SSL Certificate"
+openssl genrsa -out key.pem 2048
+openssl req -new -x509 -key key.pem -out cert.pem -days 1 -subj "/CN=example.com"
+
+run_safe gcloud compute ssl-certificates create $CERT_T2 \
+  --certificate=cert.pem --private-key=key.pem --global --quiet
+
+echo ">>> TASK 2: URL Map"
+run_safe gcloud compute url-maps create web-map-https \
+  --default-service=$BACKEND_T2 --quiet
+
+echo ">>> TASK 2: Target HTTPS Proxy"
+run_safe gcloud compute target-https-proxies create https-proxy \
+  --url-map=web-map-https --ssl-certificates=$CERT_T2 --quiet
+
+echo ">>> TASK 2: Forwarding Rule for HTTPS (Port 443)"
+run_safe gcloud compute forwarding-rules create https-content-rule \
+  --address=$IP_T2 --global \
+  --target-https-proxy=https-proxy --ports=443 --quiet
+
 echo ""
 echo "=========================================="
-echo "  ✅ Base Setup Complete!"
+echo "  ✅ Full Setup Complete!"
 echo "=========================================="
 echo ""
-echo "Ab Cloud Console se ya gcloud se yeh kar:"
-echo "  1. SSL certificate create (openssl + gcloud ssl-certificates)"
-echo "  2. HTTPS Frontend (URL map + HTTPS proxy + forwarding rule port 443)"
-echo "  3. 'Check my progress' dono Task 1 aur Task 2 ke liye"
+echo "Ab lab panel mein 'Check my progress' click karo:"
+echo "  1. Task 1 ke liye"
+echo "  2. Task 2 ke liye"
+echo ""
+echo "Agar score na aaye to browser refresh karo ya incognito use karo."
