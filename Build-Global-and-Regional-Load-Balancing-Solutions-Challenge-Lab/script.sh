@@ -32,13 +32,25 @@ USERNAME=$(echo $ACTIVE_ACCOUNT | cut -d'@' -f1)
 echo -e "✅ Username: $USERNAME"
 
 # ---------- USER INPUTS (Region A / Region B) ----------
+# ---------- USER INPUTS (Sirf Regions) ----------
 echo -e "\n${YELLOW}[Lab Specific Inputs]${NC}"
 echo -e "${YELLOW}Note: Region A aur Region B lab ke 'Start Lab' page pe diye hote hain.${NC}"
 
 read -p "Enter Region A (e.g. us-east1): " REGION_A
-read -p "Enter Zone A   (e.g. us-east1-b): " ZONE_A
 read -p "Enter Region B (e.g. europe-west1): " REGION_B
-read -p "Enter Zone B   (e.g. europe-west1-b): " ZONE_B
+
+# Auto-derive zones from regions
+echo -e "\n${GREEN}[Auto-detecting zones...]${NC}"
+ZONE_A=$(gcloud compute zones list --filter="region:$REGION_A" --format="value(name)" | head -1)
+ZONE_B=$(gcloud compute zones list --filter="region:$REGION_B" --format="value(name)" | head -1)
+
+if [[ -z "$ZONE_A" || -z "$ZONE_B" ]]; then
+    echo -e "${RED}❌ Zone auto-detect fail hua. Region names check karo.${NC}"
+    exit 1
+fi
+
+echo -e "✅ Zone A: $ZONE_A"
+echo -e "✅ Zone B: $ZONE_B"
 
 # Derived variables
 SUBNET_A="subnet-a"
