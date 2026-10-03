@@ -31,7 +31,6 @@ ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account
 USERNAME=$(echo $ACTIVE_ACCOUNT | cut -d'@' -f1)
 echo -e "✅ Username: $USERNAME"
 
-# ---------- USER INPUTS (Region A / Region B) ----------
 # ---------- USER INPUTS (Sirf Regions) ----------
 echo -e "\n${YELLOW}[Lab Specific Inputs]${NC}"
 echo -e "${YELLOW}Note: Region A aur Region B lab ke 'Start Lab' page pe diye hote hain.${NC}"
@@ -40,13 +39,18 @@ read -p "Enter Region A (e.g. us-east1): " REGION_A
 read -p "Enter Region B (e.g. europe-west1): " REGION_B
 
 # Auto-derive zones from regions
-echo -e "\n${GREEN}[Auto-detecting zones...]${NC}"
+echo -e "\n${GREEN}[Auto-detecting zones from regions...]${NC}"
 ZONE_A=$(gcloud compute zones list --filter="region:$REGION_A" --format="value(name)" | head -1)
 ZONE_B=$(gcloud compute zones list --filter="region:$REGION_B" --format="value(name)" | head -1)
 
-if [[ -z "$ZONE_A" || -z "$ZONE_B" ]]; then
-    echo -e "${RED}❌ Zone auto-detect fail hua. Region names check karo.${NC}"
-    exit 1
+# Fallback agar zone list na mile
+if [[ -z "$ZONE_A" ]]; then
+    ZONE_A="${REGION_A}-b"
+    echo -e "${YELLOW}⚠️  Zone A auto-detect fail, fallback use kar raha hoon: $ZONE_A${NC}"
+fi
+if [[ -z "$ZONE_B" ]]; then
+    ZONE_B="${REGION_B}-b"
+    echo -e "${YELLOW}⚠️  Zone B auto-detect fail, fallback use kar raha hoon: $ZONE_B${NC}"
 fi
 
 echo -e "✅ Zone A: $ZONE_A"
