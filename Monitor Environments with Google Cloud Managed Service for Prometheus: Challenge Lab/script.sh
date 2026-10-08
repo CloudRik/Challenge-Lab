@@ -13,69 +13,106 @@ RESET='\033[0m'
 
 clear
 echo
-echo "${CYAN}${BOLD}=========================================${RESET}"
-echo "${CYAN}${BOLD}   GCP MANAGED PROMETHEUS CHALLENGE LAB  ${RESET}"
-echo "${CYAN}${BOLD}=========================================${RESET}"
+echo "${CYAN}${BOLD}=================================================${RESET}"
+echo "${CYAN}${BOLD}   GCP MANAGED PROMETHEUS CHALLENGE LAB         ${RESET}"
+echo "${CYAN}${BOLD}=================================================${RESET}"
 echo
 
-# Step 1: Detect project and zone
-echo "${GREEN}${BOLD}Step 1: Detecting project and zone${RESET}"
-export PROJECT=$(gcloud config get-value project 2>/dev/null)
-export ZONE=$(gcloud compute project-info describe \
-  --format="value(commonInstanceMetadata.items[google-compute-default-zone])")
+# ===============================
+# ENVIRONMENT DETECTION
+# ===============================
+PROJECT=$(gcloud config get-value project 2>/dev/null)
+
+# Zone detect karo
+ZONE=$(gcloud compute project-info describe \
+  --format="value(commonInstanceMetadata.items[google-compute-default-zone])" 2>/dev/null)
+
+if [ -z "$ZONE" ]; then
+  echo "${RED}Could not auto-detect zone.${RESET}"
+  read -p "Enter your zone (e.g., us-east4-b): " ZONE
+fi
+
+# Verify zone matches lab requirement
 echo "${BLUE}Project: ${WHITE}$PROJECT${RESET}"
 echo "${BLUE}Zone:    ${WHITE}$ZONE${RESET}"
 echo
 
-# Step 2: Create GKE cluster with managed Prometheus
-echo "${MAGENTA}${BOLD}Step 2: Creating GKE cluster with Managed Prometheus${RESET}"
-gcloud container clusters create gmp-cluster \
-  --num-nodes=3 \
-  --zone=$ZONE \
-  --enable-managed-prometheus \
-  --quiet
-echo "${GREEN}Cluster created${RESET}"
+# ===============================
+# TASK 1: Create GKE cluster
+# ===============================
+echo "${MAGENTA}${BOLD}Task 1: Creating GKE cluster with Managed Prometheus${RESET}"
+
+if gcloud container clusters describe gmp-cluster --zone=$ZONE &>/dev/null; then
+  echo "${YELLOW}Cluster already exists, skipping creation${RESET}"
+else
+  gcloud container clusters create gmp-cluster \
+    --num-nodes=3 \
+    --zone=$ZONE \
+    --enable-managed-prometheus \
+    --quiet
+fi
+
+echo "${GREEN}Cluster ready${RESET}"
 echo
 
-# Step 3: Get credentials
-echo "${YELLOW}${BOLD}Step 3: Fetching cluster credentials${RESET}"
+echo "${YELLOW}${BOLD}Fetching cluster credentials${RESET}"
 gcloud container clusters get-credentials gmp-cluster --zone=$ZONE
 echo "${GREEN}Credentials retrieved${RESET}"
 echo
 
-# Step 4: Create gmp-test namespace
-echo "${CYAN}${BOLD}Step 4: Creating gmp-test namespace${RESET}"
-kubectl create ns gmp-test
-echo "${GREEN}Namespace created${RESET}"
+# ===============================
+# TASK 2: Create namespace + Apply manifests
+# ===============================
+echo "${CYAN}${BOLD}Task 2: Creating gmp-test namespace${RESET}"
+
+if kubectl get ns gmp-test &>/dev/null; then
+  echo "${YELLOW}Namespace already exists, skipping${RESET}"
+else
+  kubectl create ns gmp-test
+fi
+echo "${GREEN}Namespace ready${RESET}"
 echo
 
-# Step 5: Apply setup manifests
-echo "${BLUE}${BOLD}Step 5: Applying setup manifests${RESET}"
-kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/main/manifests/setup.yaml
+# Apply setup manifests
+echo "${CYAN}${BOLD}Task 2: Applying setup manifests${RESET}"
+kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/v0.4.3-gke.0/manifests/setup.yaml
 echo "${GREEN}Setup applied${RESET}"
 echo
 
-# Step 6: Apply operator manifests
-echo "${MAGENTA}${BOLD}Step 6: Applying operator manifests${RESET}"
-kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/main/manifests/operator.yaml
+echo "${CYAN}${BOLD}Task 2: Applying operator manifests${RESET}"
+kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/v0.4.3-gke.0/manifests/operator.yaml
 echo "${GREEN}Operator applied${RESET}"
 echo
 
-# Step 7: Deploy example application
-echo "${YELLOW}${BOLD}Step 7: Deploying example application${RESET}"
-kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/main/examples/example-app.yaml
+# ===============================
+# TASK 3: Deploy example application
+# ===============================
+echo "${YELLOW}${BOLD}Task 3: Deploying example application${RESET}"
+kubectl -n gmp-test apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/prometheus-engine/v0.4.3-gke.0/examples/example-app.yaml
 echo "${GREEN}Example app deployed${RESET}"
 echo
 
-# Step 8: Patch operator config
-echo "${RED}${BOLD}Step 8: Patching operator config for metric filtering${RESET}"
-kubectl patch operatorconfig config -n gmp-public --type='json' -p='[
-  {"op": "add", "path": "/collection", "value": {"filter": {"matchOneOf": ["{job=\"prom-example\"}", "{__name__=~\"job:.+\"}"]}}}
-]' 2>/dev/null || echo "${YELLOW}Operator config patch skipped (namespace may not exist yet)${RESET}"
+# Wait for pods
+echo "${YELLOW}Waiting for pods to be Ready...${RESET}"
+kubectl -n gmp-test wait --for=condition=Ready pods --all --timeout=300s 2>/dev/null || true
+
+echo "${YELLOW}Pods status:${RESET}"
+kubectl -n gmp-test get pods
 echo
 
-# Step 9: Create op-config.yaml
-echo "${GREEN}${BOLD}Step 9: Generating op-config.yaml${RESET}"
+# ===============================
+# TASK 4: Filter exported metrics
+# ===============================
+echo "${RED}${BOLD}Task 4: Filtering exported metrics${RESET}"
+
+# Patch operator config
+kubectl patch operatorconfig config -n gmp-public --type='json' -p='[
+  {"op": "add", "path": "/collection", "value": {"filter": {"matchOneOf": ["{job=\"prom-example\"}", "{__name__=~\"job:.+\"}"]}}}
+]' 2>/dev/null || echo "${YELLOW}Operator config patch skipped${RESET}"
+echo
+
+# Create op-config.yaml
+echo "${GREEN}${BOLD}Task 4: Generating op-config.yaml${RESET}"
 cat > op-config.yaml <<'EOF_END'
 apiVersion: monitoring.googleapis.com/v1alpha1
 collection:
@@ -95,8 +132,8 @@ EOF_END
 echo "${GREEN}op-config.yaml created${RESET}"
 echo
 
-# Step 10: Upload to Cloud Storage
-echo "${CYAN}${BOLD}Step 10: Uploading config to Cloud Storage${RESET}"
+# Upload to Cloud Storage
+echo "${CYAN}${BOLD}Task 4: Uploading config to Cloud Storage${RESET}"
 gcloud storage buckets create gs://$PROJECT --project=$PROJECT 2>/dev/null || echo "${YELLOW}Bucket already exists${RESET}"
 gcloud storage cp op-config.yaml gs://$PROJECT/
 gcloud storage buckets add-iam-policy-binding gs://$PROJECT \
@@ -106,8 +143,8 @@ gcloud storage buckets add-iam-policy-binding gs://$PROJECT \
 echo "${GREEN}Config uploaded and public read enabled${RESET}"
 echo
 
-# Step 11: Create prom-example-config.yaml
-echo "${MAGENTA}${BOLD}Step 11: Generating prom-example-config.yaml${RESET}"
+# Create prom-example-config.yaml
+echo "${MAGENTA}${BOLD}Task 4: Generating prom-example-config.yaml${RESET}"
 cat > prom-example-config.yaml <<EOF
 apiVersion: monitoring.googleapis.com/v1alpha1
 kind: PodMonitoring
@@ -127,8 +164,8 @@ EOF
 echo "${GREEN}prom-example-config.yaml created${RESET}"
 echo
 
-# Step 12: Upload prom-example-config
-echo "${BLUE}${BOLD}Step 12: Uploading prom-example-config to Cloud Storage${RESET}"
+# Upload prom-example-config
+echo "${BLUE}${BOLD}Task 4: Uploading prom-example-config${RESET}"
 gcloud storage cp prom-example-config.yaml gs://$PROJECT/
 gcloud storage buckets add-iam-policy-binding gs://$PROJECT \
   --member=allUsers \
@@ -137,20 +174,33 @@ gcloud storage buckets add-iam-policy-binding gs://$PROJECT \
 echo "${GREEN}Uploaded${RESET}"
 echo
 
-# Final verification
-echo "${CYAN}${BOLD}=========================================${RESET}"
+# ===============================
+# VERIFICATION
+# ===============================
+echo "${CYAN}${BOLD}=================================================${RESET}"
 echo "${CYAN}${BOLD}   VERIFICATION${RESET}"
-echo "${CYAN}${BOLD}=========================================${RESET}"
+echo "${CYAN}${BOLD}=================================================${RESET}"
+echo
+
 echo "${YELLOW}Cluster status:${RESET}"
 gcloud container clusters list --filter="name:gmp-cluster" --format="table(name,status,zone)"
 echo
+
 echo "${YELLOW}Pods in gmp-test:${RESET}"
 kubectl get pods -n gmp-test
 echo
+
 echo "${YELLOW}Storage bucket contents:${RESET}"
 gcloud storage ls gs://$PROJECT/
 echo
-echo "${CYAN}${BOLD}=========================================${RESET}"
-echo "${CYAN}${BOLD}   LAB SETUP COMPLETED${RESET}"
-echo "${CYAN}${BOLD}=========================================${RESET}"
+
+echo "${CYAN}${BOLD}=================================================${RESET}"
+echo "${CYAN}${BOLD}   AUTOMATED SETUP COMPLETED${RESET}"
+echo "${CYAN}${BOLD}=================================================${RESET}"
+echo
+echo "${WHITE}Now click Check my progress in the lab for:${RESET}"
+echo "  - Task 1 (Deploy GKE cluster)"
+echo "  - Task 2 (Deploy managed collection)"
+echo "  - Task 3 (Deploy example application)"
+echo "  - Task 4 (Filter exported metrics)"
 echo
