@@ -23,13 +23,12 @@ echo
 # ===============================
 PROJECT=$(gcloud config get-value project 2>/dev/null)
 
-# Region auto-detect (from lab)
 REGION=$(gcloud compute project-info describe \
   --format="value(commonInstanceMetadata.items[google-compute-default-region])" 2>/dev/null)
 
 if [ -z "$REGION" ]; then
   echo "${RED}Could not auto-detect region.${RESET}"
-  read -p "Enter your region (e.g., us-east4): " REGION
+  read -p "Enter your region (e.g., us-central1): " REGION
 fi
 
 echo "${BLUE}Project: ${WHITE}$PROJECT${RESET}"
@@ -43,7 +42,6 @@ echo "${GREEN}${BOLD}Task 1: Creating AlloyDB cluster + instance${RESET}"
 echo "${WHITE}This will take 9-13 minutes...${RESET}"
 echo
 
-# Create cluster
 if gcloud beta alloydb clusters describe lab-cluster --region=$REGION &>/dev/null; then
   echo "${YELLOW}Cluster lab-cluster already exists, skipping...${RESET}"
 else
@@ -55,7 +53,6 @@ else
     --quiet
 fi
 
-# Create instance
 if gcloud beta alloydb instances describe lab-instance --cluster=lab-cluster --region=$REGION &>/dev/null; then
   echo "${YELLOW}Instance lab-instance already exists, skipping...${RESET}"
 else
@@ -71,7 +68,6 @@ fi
 echo "${GREEN}Task 1 complete${RESET}"
 echo
 
-# Wait for cluster READY
 echo "${YELLOW}Waiting for cluster to be READY...${RESET}"
 for i in {1..90}; do
   STATUS=$(gcloud beta alloydb clusters describe lab-cluster --region=$REGION --format="value(state)" 2>/dev/null)
@@ -81,7 +77,6 @@ for i in {1..90}; do
   sleep 20
 done
 
-# Get private IP
 ALLOYDB_IP=$(gcloud beta alloydb instances describe lab-instance \
   --cluster=lab-cluster \
   --region=$REGION \
@@ -95,7 +90,7 @@ echo "${BLUE}AlloyDB Private IP: ${WHITE}$ALLOYDB_IP${RESET}"
 echo
 
 # ===============================
-# TASK 2 & 3: Create tables + Load data (VM pe psql)
+# TASK 2 & 3: Create tables + Load data
 # ===============================
 echo "${GREEN}${BOLD}Task 2 & 3: Creating tables and loading data${RESET}"
 
@@ -114,7 +109,6 @@ gcloud compute ssh alloydb-client --zone=$VM_ZONE --command="
   export ALLOYDB=$ALLOYDB_IP
   echo \$ALLOYDB > alloydbip.txt
 
-  # Task 2: Create 3 tables
   PGPASSWORD=Change3Me psql -h \$ALLOYDB -U postgres <<'SQL_END'
 CREATE TABLE regions (
   region_id bigint NOT NULL,
@@ -138,7 +132,6 @@ CREATE TABLE departments (
 ALTER TABLE departments ADD PRIMARY KEY (department_id);
 SQL_END
 
-  # Task 3: Load data
   PGPASSWORD=Change3Me psql -h \$ALLOYDB -U postgres <<'SQL_END'
 INSERT INTO regions VALUES
   (1, 'Europe'), (2, 'Americas'), (3, 'Asia'), (4, 'Middle East and Africa');
@@ -187,22 +180,22 @@ echo "${GREEN}Task 4 complete${RESET}"
 echo
 
 # ===============================
-# TASK 5: Create backup
+# TASK 5: SKIP (Run manually)
 # ===============================
-echo "${RED}${BOLD}Task 5: Creating backup (lab-backup)${RESET}"
-echo "${WHITE}This will take 3-5 minutes...${RESET}"
-
-if gcloud beta alloydb backups describe lab-backup --region=$REGION &>/dev/null; then
-  echo "${YELLOW}Backup already exists, skipping...${RESET}"
-else
-  gcloud beta alloydb backups create lab-backup \
-    --cluster=lab-cluster \
-    --region=$REGION \
-    --project=$PROJECT \
-    --quiet
-fi
-
-echo "${GREEN}Task 5 complete${RESET}"
+echo "${YELLOW}${BOLD}=================================================${RESET}"
+echo "${YELLOW}${BOLD}   TASK 5: RUN MANUALLY (Auth token issue)${RESET}"
+echo "${YELLOW}${BOLD}=================================================${RESET}"
+echo
+echo "${WHITE}Task 5 (Backup) ke liye yeh command chalao:${RESET}"
+echo
+echo "${GREEN}gcloud beta alloydb backups create lab-backup \\${RESET}"
+echo "${GREEN}  --cluster=lab-cluster \\${RESET}"
+echo "${GREEN}  --region=$REGION \\${RESET}"
+echo "${GREEN}  --project=$PROJECT \\${RESET}"
+echo "${GREEN}  --quiet${RESET}"
+echo
+echo "${WHITE}Ya Console se:${RESET}"
+echo "  AlloyDB → Backups → Create backup → lab-backup → Create"
 echo
 
 # ===============================
@@ -221,18 +214,12 @@ echo "${YELLOW}AlloyDB instances:${RESET}"
 gcloud beta alloydb instances list --cluster=lab-cluster --region=$REGION
 echo
 
-echo "${YELLOW}AlloyDB backups:${RESET}"
-gcloud beta alloydb backups list --region=$REGION
-echo
-
 echo "${CYAN}${BOLD}=================================================${RESET}"
-echo "${CYAN}${BOLD}   AUTOMATED SETUP COMPLETED${RESET}"
+echo "${CYAN}${BOLD}   TASK 1-4 COMPLETED${RESET}"
 echo "${CYAN}${BOLD}=================================================${RESET}"
 echo
-echo "${WHITE}Now click Check my progress in the lab for:${RESET}"
-echo "  - Task 1 (Create a cluster and instance)"
-echo "  - Task 2 (Create tables in your instance)"
-echo "  - Task 3 (Load simple datasets into tables)"
-echo "  - Task 4 (Create a Read Pool instance)"
-echo "  - Task 5 (Create a backup)"
+echo "${WHITE}Now:${RESET}"
+echo "  1. Task 1, 2, 3, 4 ke Check my progress click karo"
+echo "  2. Task 5 manually chalao (upar wali command)"
+echo "  3. Task 5 Check my progress click karo"
 echo
