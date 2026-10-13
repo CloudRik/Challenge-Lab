@@ -19,77 +19,66 @@ echo "${CYAN}${BOLD}=================================================${RESET}"
 echo
 
 # ===============================
-# UNIVERSAL ENVIRONMENT DETECTION
+# ENVIRONMENT DETECTION (User Input)
 # ===============================
-echo "${YELLOW}${BOLD}[1/6] Detecting environment...${RESET}"
+echo "${YELLOW}${BOLD}Environment Setup${RESET}"
+echo
 
-# 1. Project ID auto-detect
+# Project ID
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
-
 if [ -z "$PROJECT_ID" ]; then
   read -p "Enter Project ID: " PROJECT_ID
 fi
+echo "${BLUE}Project: ${WHITE}$PROJECT_ID${RESET}"
 
-# 2. Zone auto-detect
+# Zone
 ZONE=$(gcloud compute project-info describe \
   --format="value(commonInstanceMetadata.items[google-compute-default-zone])" 2>/dev/null)
-
 if [ -z "$ZONE" ]; then
-  echo "${YELLOW}Zone not auto-detected.${RESET}"
-  echo "${WHITE}Available zones:${RESET}"
-  gcloud compute zones list --format="value(name)" | head -10
-  read -p "Enter zone (e.g., us-central1-a): " ZONE
+  read -p "Enter Zone (e.g., us-central1-a): " ZONE
 fi
+echo "${BLUE}Zone: ${WHITE}$ZONE${RESET}"
 
-# 3. Cluster name auto-detect
+# Cluster name (auto-detect from GKE)
 CLUSTER_NAME=$(gcloud container clusters list --format="value(name)" 2>/dev/null | head -1)
-
 if [ -z "$CLUSTER_NAME" ]; then
-  read -p "Enter GKE cluster name: " CLUSTER_NAME
+  echo "${YELLOW}No cluster found. Please enter cluster name:${RESET}"
+  read -p "Cluster name (e.g., echo-web): " CLUSTER_NAME
 fi
+echo "${BLUE}Cluster: ${WHITE}$CLUSTER_NAME${RESET}"
 
-# 4. Lab-specific values (usually same across labs)
-ARCHIVE_NAME="echo-web-v2.tar.gz"
+# App details (from lab)
 APP_NAME="echo-app"
-APP_VERSION="v2"
-DEPLOYMENT_NAME="echo-app"
+APP_TAG="v2"
+DEPLOYMENT_NAME="echo-web"
+ARCHIVE_NAME="echo-web-v2.tar.gz"
 BUCKET="gs://$PROJECT_ID"
 
-echo
-echo "${CYAN}${BOLD}===== DETECTED VALUES =====${RESET}"
-echo "${BLUE}Project:    ${WHITE}$PROJECT_ID${RESET}"
-echo "${BLUE}Zone:       ${WHITE}$ZONE${RESET}"
-echo "${BLUE}Cluster:    ${WHITE}$CLUSTER_NAME${RESET}"
-echo "${BLUE}Archive:    ${WHITE}$ARCHIVE_NAME${RESET}"
-echo "${BLUE}App:        ${WHITE}$APP_NAME:$APP_VERSION${RESET}"
-echo "${BLUE}Bucket:     ${WHITE}$BUCKET${RESET}"
-echo "${CYAN}${BOLD}===========================${RESET}"
+echo "${BLUE}App: ${WHITE}$APP_NAME:$APP_TAG${RESET}"
+echo "${BLUE}Deployment: ${WHITE}$DEPLOYMENT_NAME${RESET}"
 echo
 
-echo "${YELLOW}Press Enter to continue (Ctrl+C to cancel)...${RESET}"
-read
+read -p "Press Enter to continue (Ctrl+C to cancel)..."
 
 # ===============================
-# TASK 1: Build & Deploy Updated Application
+# TASK 1: Build Docker image with new tag
 # ===============================
 echo
-echo "${GREEN}${BOLD}[2/6] Task 1: Building Docker image with new tag${RESET}"
+echo "${GREEN}${BOLD}[TASK 1] Build and deploy updated application${RESET}"
 
 # Download archive
 echo "${YELLOW}Downloading $ARCHIVE_NAME from $BUCKET...${RESET}"
-
-if gsutil cp $BUCKET/$ARCHIVE_NAME . 2>/dev/null; then
-  echo "${GREEN}Archive downloaded${RESET}"
-else
-  echo "${RED}Download failed. Trying alternative paths...${RESET}"
-  gsutil ls $BUCKET/ | grep -i "echo"
+if ! gsutil cp $BUCKET/$ARCHIVE_NAME . 2>/dev/null; then
+  echo "${RED}Archive not found at $BUCKET/$ARCHIVE_NAME${RESET}"
+  echo "${YELLOW}Searching bucket contents...${RESET}"
+  gsutil ls $BUCKET/ | head -10
   read -p "Enter exact archive name: " ARCHIVE_NAME
   gsutil cp $BUCKET/$ARCHIVE_NAME .
 fi
 
 # Extract
-echo "${YELLOW}Extracting archive...${RESET}"
-tar -xzf $ARCHIVE_NAME 2>/dev/null || unzip $ARCHIVE_NAME
+echo "${YELLOW}Extracting $ARCHIVE_NAME...${RESET}"
+tar -xzf $ARCHIVE_NAME 2>/dev/null || unzip -o $ARCHIVE_NAME
 
 # Find extracted directory
 if [ -d "echo-web" ]; then
@@ -97,46 +86,39 @@ if [ -d "echo-web" ]; then
 elif [ -d "echo-app" ]; then
   cd echo-app
 else
-  echo "${YELLOW}Finding extracted directory...${RESET}"
-  EXTRACTED_DIR=$(ls -d */ 2>/dev/null | grep -E "echo|web|app" | head -1 | tr -d '/')
-  if [ -n "$EXTRACTED_DIR" ]; then
-    cd $EXTRACTED_DIR
-  fi
+  EXTRACTED_DIR=$(ls -d */ 2>/dev/null | grep -iE "echo|web|app" | head -1 | tr -d '/')
+  [ -n "$EXTRACTED_DIR" ] && cd $EXTRACTED_DIR
 fi
 
-echo "${BLUE}Current directory: ${WHITE}$(pwd)${RESET}"
+echo "${BLUE}Current dir: ${WHITE}$(pwd)${RESET}"
 
 # Build Docker image
-echo "${YELLOW}Building Docker image $APP_NAME:$APP_VERSION...${RESET}"
-docker build -t $APP_NAME:$APP_VERSION . || {
-  echo "${RED}Docker build failed. Check Dockerfile.${RESET}"
-  ls -la
+echo "${YELLOW}Building Docker image $APP_NAME:$APP_TAG...${RESET}"
+docker build -t $APP_NAME:$APP_TAG . || {
+  echo "${RED}Docker build failed${RESET}"
   exit 1
 }
 
-echo "${GREEN}Image built: $APP_NAME:$APP_VERSION${RESET}"
+echo "${GREEN}Image built: $APP_NAME:$APP_TAG${RESET}"
 echo
 
-echo "${WHITE}>>> LAB PAGE pe click karo: 'Build and deploy the updated application with a new tag'${RESET}"
-echo "${WHITE}Press Enter when Check my progress passes...${RESET}"
+echo "${YELLOW}${BOLD}NOTE: Task 1 has NO Check my progress button — proceed directly.${RESET}"
+echo "${WHITE}Press Enter to continue...${RESET}"
 read
 
 # ===============================
 # TASK 2: Push to Container Registry
 # ===============================
 echo
-echo "${MAGENTA}${BOLD}[3/6] Task 2: Pushing image to gcr.io${RESET}"
+echo "${MAGENTA}${BOLD}[TASK 2] Push image to gcr.io${RESET}"
 
-# Tag for gcr.io
-GCR_IMAGE="gcr.io/$PROJECT_ID/$APP_NAME:$APP_VERSION"
+GCR_IMAGE="gcr.io/$PROJECT_ID/$APP_NAME:$APP_TAG"
 echo "${YELLOW}Tagging: $GCR_IMAGE${RESET}"
-docker tag $APP_NAME:$APP_VERSION $GCR_IMAGE
+docker tag $APP_NAME:$APP_TAG $GCR_IMAGE
 
-# Configure Docker for gcr.io
 echo "${YELLOW}Configuring Docker for gcr.io...${RESET}"
-gcloud auth configure-docker --quiet 2>/dev/null
+gcloud auth configure-docker --quiet
 
-# Push
 echo "${YELLOW}Pushing image...${RESET}"
 docker push $GCR_IMAGE
 
@@ -148,59 +130,84 @@ echo "${WHITE}Press Enter when Check my progress passes...${RESET}"
 read
 
 # ===============================
-# TASK 3: Scale out GKE cluster
+# TASK 3: Deploy updated application to K8s cluster
 # ===============================
 echo
-echo "${BLUE}${BOLD}[4/6] Task 3: Scaling out GKE cluster${RESET}"
+echo "${BLUE}${BOLD}[TASK 3] Deploy updated application to Kubernetes${RESET}"
 
-# Get current cluster info
-CURRENT_NODES=$(gcloud container clusters describe $CLUSTER_NAME \
-  --zone=$ZONE --format="value(currentNodeCount)" 2>/dev/null)
+# Get cluster credentials
+echo "${YELLOW}Fetching cluster credentials...${RESET}"
+gcloud container clusters get-credentials $CLUSTER_NAME --zone=$ZONE
 
-echo "${BLUE}Current nodes: ${WHITE}$CURRENT_NODES${RESET}"
+# Deploy the application
+echo "${YELLOW}Creating deployment $DEPLOYMENT_NAME...${RESET}"
 
-# Scale cluster
-echo "${YELLOW}Scaling cluster to 3 nodes...${RESET}"
-gcloud container clusters resize $CLUSTER_NAME \
-  --num-nodes=3 \
-  --zone=$ZONE \
-  --quiet
+kubectl create deployment $DEPLOYMENT_NAME \
+  --image=$GCR_IMAGE \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-echo "${GREEN}Cluster scaled to 3 nodes${RESET}"
+# Expose on port 80
+echo "${YELLOW}Exposing deployment on port 80...${RESET}"
+kubectl expose deployment $DEPLOYMENT_NAME \
+  --type=LoadBalancer \
+  --port=80 \
+  --target-port=8080 \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "${GREEN}Deployment applied${RESET}"
 echo
 
-echo "${WHITE}>>> LAB PAGE pe click karo: 'Scale out the cluster'${RESET}"
+echo "${WHITE}>>> LAB PAGE pe click karo: 'Deploy the updated application version (v2) to the Kubernetes cluster'${RESET}"
 echo "${WHITE}Press Enter when Check my progress passes...${RESET}"
 read
 
 # ===============================
-# TASK 4: Update deployment
+# TASK 4: Scale out the application
 # ===============================
 echo
-echo "${MAGENTA}${BOLD}[5/6] Task 4: Updating deployment with new image${RESET}"
+echo "${MAGENTA}${BOLD}[TASK 4] Scale out application to 2 replicas${RESET}"
 
-# Get cluster credentials
-echo "${YELLOW}Fetching cluster credentials...${RESET}"
-gcloud container clusters get-credentials $CLUSTER_NAME --zone=$ZONE --quiet
+echo "${YELLOW}Scaling $DEPLOYMENT_NAME to 2 replicas...${RESET}"
+kubectl scale deployment $DEPLOYMENT_NAME --replicas=2
 
-# Get current deployment name
-CURRENT_DEPLOY=$(kubectl get deployments -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-echo "${BLUE}Current deployment: ${WHITE}$CURRENT_DEPLOY${RESET}"
-
-# Update deployment image
-echo "${YELLOW}Updating deployment image...${RESET}"
-kubectl set image deployment/$CURRENT_DEPLOY \
-  "*=$GCR_IMAGE" \
-  --record=false
-
-# Wait for rollout
 echo "${YELLOW}Waiting for rollout...${RESET}"
-kubectl rollout status deployment/$CURRENT_DEPLOY --timeout=300s
+kubectl rollout status deployment/$DEPLOYMENT_NAME --timeout=300s
 
-echo "${GREEN}Deployment updated${RESET}"
+echo "${GREEN}Application scaled to 2 replicas${RESET}"
 echo
 
-echo "${WHITE}>>> LAB PAGE pe click karo: 'Update the deployment'${RESET}"
+echo "${WHITE}>>> LAB PAGE pe click karo: 'Scale out the kubernetes application so that it is running 2 replicas'${RESET}"
+echo "${WHITE}Press Enter when Check my progress passes...${RESET}"
+read
+
+# ===============================
+# TASK 5: Confirm application is running
+# ===============================
+echo
+echo "${CYAN}${BOLD}[TASK 5] Verify the application is running${RESET}"
+
+echo "${YELLOW}Waiting for external IP...${RESET}"
+for i in $(seq 1 30); do
+  EXTERNAL_IP=$(kubectl get service $DEPLOYMENT_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+  if [ -n "$EXTERNAL_IP" ]; then
+    break
+  fi
+  echo "  Waiting... ($i/30)"
+  sleep 10
+done
+
+if [ -n "$EXTERNAL_IP" ]; then
+  echo "${GREEN}External IP: $EXTERNAL_IP${RESET}"
+  echo
+  echo "${YELLOW}Testing application...${RESET}"
+  curl -s http://$EXTERNAL_IP
+  echo
+else
+  echo "${RED}External IP not assigned yet. Try again later.${RESET}"
+fi
+echo
+
+echo "${WHITE}>>> LAB PAGE pe click karo: 'Verify your deployed application service is responding correctly'${RESET}"
 echo "${WHITE}Press Enter when Check my progress passes...${RESET}"
 read
 
@@ -208,11 +215,7 @@ read
 # VERIFICATION
 # ===============================
 echo
-echo "${CYAN}${BOLD}[6/6] VERIFICATION${RESET}"
-echo
-
-echo "${YELLOW}Cluster status:${RESET}"
-gcloud container clusters list --format="table(name,zone,currentNodeCount,status)"
+echo "${CYAN}${BOLD}=== VERIFICATION ===${RESET}"
 echo
 
 echo "${YELLOW}Pods:${RESET}"
@@ -227,25 +230,14 @@ echo "${YELLOW}Services:${RESET}"
 kubectl get services
 echo
 
-echo "${YELLOW}Container Registry images:${RESET}"
+echo "${YELLOW}GCR images:${RESET}"
 gcloud container images list --repository=gcr.io/$PROJECT_ID
 echo
 
-echo "${YELLOW}Image details:${RESET}"
-gcloud container images describe $GCR_IMAGE --format="value(image_summary.digest)" 2>/dev/null
-echo
-
-# ===============================
-# FINAL
-# ===============================
-echo
 echo "${CYAN}${BOLD}=================================================${RESET}"
 echo "${CYAN}${BOLD}   LAB COMPLETED - GSP354${RESET}"
 echo "${CYAN}${BOLD}=================================================${RESET}"
 echo
 echo "${GREEN}All tasks executed successfully!${RESET}"
 echo "${WHITE}Final score check karo lab page pe.${RESET}"
-echo
-echo "${YELLOW}Service URL ke liye:${RESET}"
-kubectl get services -o wide
 echo
