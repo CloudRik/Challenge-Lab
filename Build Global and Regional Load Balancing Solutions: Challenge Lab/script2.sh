@@ -1,13 +1,13 @@
 #!/bin/bash
-# Build Global and Regional Load Balancing - FULL V8 - Task 1 replaced with new code
-# Region A: us-west1, Region B: us-east4 (defaults, user override karega)
+# Build Global and Regional Load Balancing - FULL V9
+# Task 1 = naya code (lb-network) | Task 2 = purana code (default network)
 set +e
 
 YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
 export PROJECT_ID=$(gcloud config get-value project)
 
 # ============================================================
-# USER INPUT FOR REGIONS (naya Task 1 aur purana Task 2 dono isi ko use karenge)
+# USER INPUT
 # ============================================================
 read -p "Enter Region A [default: us-west1]: " REGION_A
 REGION_A=${REGION_A:-us-west1}
@@ -22,12 +22,13 @@ gcloud config set project $PROJECT_ID -q
 gcloud config set compute/region $REGION_B -q
 
 # ============================================================
-# TASK 1 : REPLACED WITH NEW BLOCK 2 + BLOCK 3 (internal backends, firewall, NLB, client VM)
+# TASK 1 : NEW CODE (lb-network)
 # ============================================================
 echo -e "${YELLOW}TASK 1 (NEW) : Internal backends + firewall + NLB + client VM${NC}"
 
-# --- Block 1 se lab.env values derive (naye block ka setup part) ---
 NETWORK=lb-network
+
+# --- lab.env derive ---
 [ -z "$REGION_B" ] && REGION_B=$(gcloud compute networks subnets list --network=$NETWORK --filter="purpose:REGIONAL_MANAGED_PROXY" --format="value(region.basename())" | head -1)
 [ -z "$REGION_B" ] && REGION_B=$(gcloud compute instance-templates list --filter="name=template-proxy-internal" --format="value(region.basename())" | head -1)
 [ -z "$REGION_A" ] && REGION_A=$(gcloud compute networks subnets list --network=$NETWORK --filter="NOT purpose:REGIONAL_MANAGED_PROXY" --format="value(region.basename())" | sort -u | grep -vx "$REGION_B" | head -1)
@@ -48,7 +49,7 @@ export TPL_ALB=$TPL_ALB
 EOF
 echo; echo "===== YOUR LAB VALUES ====="; cat ~/lab.env
 
-# --- Block 2: Task 1 internal backends + firewall rules ---
+# --- Block 2: internal backends + firewall rules ---
 source ~/lab.env
 
 gcloud compute instance-groups managed create mig-proxy-internal \
@@ -66,10 +67,9 @@ gcloud compute firewall-rules create fw-allow-proxy-only-subnet \
 
 echo; echo ">>> Click Check my progress: Create a regional MIG and 2 firewall rules"
 
-# --- Block 3: Task 1 internal proxy LB + client VM ---
+# --- Block 3: internal proxy LB + client VM ---
 source ~/lab.env
 
-# Proxy-only subnet (only created if it doesn't exist yet)
 gcloud compute networks subnets list --network=$NETWORK \
   --filter="region:($REGION_B) AND purpose:REGIONAL_MANAGED_PROXY" --format="value(name)" | grep -q . \
 || gcloud compute networks subnets create proxy-only-subnet --network=$NETWORK \
@@ -102,7 +102,7 @@ gcloud compute instances create vm-client-internal --zone=$ZONE_B \
   --machine-type=e2-small --image-family=debian-12 --image-project=debian-cloud
 
 INTERNAL_IP=$(gcloud compute addresses describe ip-internal-proxy --region=$REGION_B --format="value(address)")
-echo "Testing http://$INTERNAL_IP:110 from vm-client-internal (press Enter if asked about SSH keys)..."
+echo "Testing http://$INTERNAL_IP:110 from vm-client-internal ..."
 for i in $(seq 15); do
   OUT=$(gcloud compute ssh vm-client-internal --zone=$ZONE_B --quiet --command="curl -s --max-time 5 http://$INTERNAL_IP:110" 2>/dev/null \
      || gcloud compute ssh vm-client-internal --zone=$ZONE_B --quiet --tunnel-through-iap --command="curl -s --max-time 5 http://$INTERNAL_IP:110" 2>/dev/null)
@@ -113,11 +113,13 @@ done
 echo; echo ">>> Click Check my progress: Deploy a client VM and validate the access"
 
 # ============================================================
-# TASK 2 : BILKUL UNTOUCHED (jaisa big script me tha)
+# TASK 2 : UNCHANGED CONTENT, but NETWORK = default (fix)
 # ============================================================
-echo -e "${YELLOW}TASK 2 (UNCHANGED) : Global ALB + backends + SSL + frontend + firewall${NC}"
+echo -e "${YELLOW}TASK 2 : Global ALB (using default network)${NC}"
 
-# --- FIX 1: Agar template exist nahi karta to khud banao ---
+NETWORK="default"          # <-- FIX: Task 2 default network pe chalega
+
+# --- Agar template exist nahi karta to khud banao ---
 check_template() {
   if ! gcloud compute instance-templates describe $1 --quiet 2>/dev/null; then
     echo "Template $1 not found, creating it..."
@@ -126,18 +128,14 @@ check_template() {
 apt-get update
 apt-get install -y nginx
 echo "proxy-internal" > /var/www/html/index.html
-' --region=$REGION_B 2>/dev/null || gcloud compute instance-templates create $1 --machine-type=e2-medium --network=$NETWORK --tags=tag-proxy-internal --metadata=startup-script='#!/bin/bash
-apt-get update
-apt-get install -y nginx' 
+'
     else
       gcloud compute instance-templates create $1 --machine-type=e2-medium --network=$NETWORK --tags=allow-ssh,http-server --metadata=startup-script='#!/bin/bash
 apt-get update
 apt-get install -y nginx
 HOSTNAME=$(hostname)
 echo "Hello from $HOSTNAME" > /var/www/html/index.html
-' --region=$REGION_A 2>/dev/null || gcloud compute instance-templates create $1 --machine-type=e2-medium --network=$NETWORK --tags=allow-ssh --metadata=startup-script='#!/bin/bash
-apt-get update
-apt-get install -y nginx'
+'
     fi
   fi
 }
@@ -178,4 +176,4 @@ gcloud compute forwarding-rules create rule-alb-global-https --global --target-h
 # --- TASK 2.4: Firewall ---
 gcloud compute firewall-rules create fw-allow-health-check-and-proxy --network=$NETWORK --allow=tcp:80 --source-ranges=130.211.0.0/22,35.191.0.0/16 2>/dev/null
 
-echo -e "${GREEN}All Tasks Created! Wait 3 mins then Check Progress. For Task 3 failover, run: sudo systemctl stop nginx inside mig-alb-api-a VM${NC}"
+echo -e "${GREEN}All Tasks Created! Wait 3 mins then Check Progress.${NC}"
