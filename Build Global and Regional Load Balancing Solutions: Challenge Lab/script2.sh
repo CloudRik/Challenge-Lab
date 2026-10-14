@@ -3,12 +3,20 @@
 # Task 1 = naya code (lb-network) | Task 2 = purana code (default network)
 set +e
 
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
 YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
 export PROJECT_ID=$(gcloud config get-value project)
 
-# ============================================================
-# USER INPUT
-# ============================================================
+echo -e "\033[1;36m"
+echo "============================================================"
+echo "  🎮 LAB: Build Global & Regional Load Balancing Solutions"
+echo "  🎬 Presented By ArcadeSuite"
+echo "  📺 YouTube: @imasis-k8x"
+echo "============================================================"
+echo -e "\033[0m"
+
 read -p "Enter Region A [default: us-west1]: " REGION_A
 REGION_A=${REGION_A:-us-west1}
 read -p "Enter Region B [default: europe-west4]: " REGION_B
@@ -24,7 +32,7 @@ gcloud config set compute/region $REGION_B -q
 # TASK 1 : NEW CODE (lb-network)
 # ============================================================
 echo -e "${YELLOW}TASK 1 : Internal backends + firewall + NLB + client VM${NC}"
-
+echo -e "\033[1;35m📺 YouTube: https://youtube.com/@imasis-k8x?si=lO3ixe-KbnN1nNBG\033[0m"
 NETWORK=lb-network
 
 # --- SUBNET_B: pehle lb-network me dhundo, nahi mila toh region ke kisi bhi network se ---
@@ -147,7 +155,7 @@ echo; echo ">>> Click Check my progress: Deploy a client VM and validate the acc
 # TASK 2 : UNCHANGED CONTENT, NETWORK = default
 # ============================================================
 echo -e "${YELLOW}TASK 2 : Global ALB (using default network)${NC}"
-
+echo -e "\033[1;35m📺 YouTube: https://youtube.com/@imasis-k8x?si=lO3ixe-KbnN1nNBG\033[0m"
 NETWORK="default"
 
 check_template() {
@@ -207,3 +215,28 @@ gcloud compute forwarding-rules create rule-alb-global-https --global --target-h
 gcloud compute firewall-rules create fw-allow-health-check-and-proxy --network=$NETWORK --allow=tcp:80 --source-ranges=130.211.0.0/22,35.191.0.0/16 2>/dev/null
 
 echo -e "${GREEN}All Tasks Created! Wait 3 mins then Check Progress.${NC}"
+
+
+echo ""
+echo -e "\033[1;32m"
+cat << "EOF"
+  _____                      _      _       
+ / ____|                    | |    | |      
+| |     ___  _ __ ___  _ __ | | ___| |_ ___ 
+| |    / _ \| '_ ` _ \| '_ \| |/ _ \ __/ _ \
+| |___| (_) | | | | | | |_) | |  __/ ||  __/
+ \_____\___/|_| |_| |_| .__/|_|\___|\__\___|
+                      | |                    
+                      |_|                    
+EOF
+echo -e "\033[0m"
+echo -e "\033[1;33m🎉 ALL TASKS COMPLETED! 🎉\033[0m"
+echo -e "\033[1;36m============================================================\033[0m"
+echo -e "\033[1;32m🎬 Presented By ArcadeSuite\033[0m"
+echo -e "\033[1;35m📺 YouTube: https://youtube.com/@imasis-k8x?si=lO3ixe-KbnN1nNBG\033[0m"
+echo -e "\033[1;34m💻 GitHub:  https://github.com/CloudRik\033[0m"
+echo -e "\033[1;33m🏆 Arcade Points: https://arcadesuite.pages.dev/\033[0m"
+echo -e "\033[1;36m============================================================\033[0m"
+echo -e "\033[1;33m⚠️  Please click 'Check my progress' for each task!\033[0m"
+echo -e "\033[1;36m============================================================\033[0m"
+echo ""
