@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Global and Regional Load Balancing - FULL V9
+# Build Global and Regional Load Balancing - FULL V10 (FINAL)
 # Task 1 = naya code (lb-network) | Task 2 = purana code (default network)
 set +e
 
@@ -11,12 +11,11 @@ export PROJECT_ID=$(gcloud config get-value project)
 # ============================================================
 read -p "Enter Region A [default: us-west1]: " REGION_A
 REGION_A=${REGION_A:-us-west1}
-read -p "Enter Region B [default: us-east4]: " REGION_B
-REGION_B=${REGION_B:-us-east4}
+read -p "Enter Region B [default: europe-west4]: " REGION_B
+REGION_B=${REGION_B:-europe-west4}
 
-ZONE_A="${REGION_A}-a"
 ZONE_B=$(gcloud compute zones list --filter="region:($REGION_B)" --format="value(name)" | sort | head -1)
-echo -e "${YELLOW}Using A=$REGION_A ($ZONE_A) | B=$REGION_B ($ZONE_B)${NC}"
+echo -e "${YELLOW}Using A=$REGION_A | B=$REGION_B ($ZONE_B)${NC}"
 
 gcloud config set project $PROJECT_ID -q
 gcloud config set compute/region $REGION_B -q
@@ -24,16 +23,28 @@ gcloud config set compute/region $REGION_B -q
 # ============================================================
 # TASK 1 : NEW CODE (lb-network)
 # ============================================================
-echo -e "${YELLOW}TASK 1 (NEW) : Internal backends + firewall + NLB + client VM${NC}"
+echo -e "${YELLOW}TASK 1 : Internal backends + firewall + NLB + client VM${NC}"
 
 NETWORK=lb-network
 
-# --- lab.env derive ---
-[ -z "$REGION_B" ] && REGION_B=$(gcloud compute networks subnets list --network=$NETWORK --filter="purpose:REGIONAL_MANAGED_PROXY" --format="value(region.basename())" | head -1)
-[ -z "$REGION_B" ] && REGION_B=$(gcloud compute instance-templates list --filter="name=template-proxy-internal" --format="value(region.basename())" | head -1)
-[ -z "$REGION_A" ] && REGION_A=$(gcloud compute networks subnets list --network=$NETWORK --filter="NOT purpose:REGIONAL_MANAGED_PROXY" --format="value(region.basename())" | sort -u | grep -vx "$REGION_B" | head -1)
-SUBNET_B=$(gcloud compute networks subnets list --network=$NETWORK --filter="region:($REGION_B) AND NOT purpose:REGIONAL_MANAGED_PROXY" --format="value(name)" | head -1)
-ZONE_B=$(gcloud compute zones list --filter="region:($REGION_B)" --format="value(name)" | sort | head -1)
+# --- SUBNET_B: pehle lb-network me dhundo, nahi mila toh region ke kisi bhi network se ---
+SUBNET_B=$(gcloud compute networks subnets list --network=$NETWORK \
+  --filter="region:($REGION_B) AND purpose!=REGIONAL_MANAGED_PROXY" \
+  --format="value(name)" | head -1)
+
+if [ -z "$SUBNET_B" ]; then
+  echo "WARNING: lb-network me Region B ka subnet nahi mila. Default network check kar raha hun..."
+  SUBNET_B=$(gcloud compute networks subnets list --network=default \
+    --filter="region:($REGION_B)" --format="value(name)" | head -1)
+fi
+
+if [ -z "$SUBNET_B" ]; then
+  echo "ERROR: Koi bhi subnet nahi mila Region B me. Lab panel check kar."
+  exit 1
+fi
+
+echo "SUBNET_B = $SUBNET_B"
+
 TPL_PROXY=$(gcloud compute instance-templates list --filter="name=template-proxy-internal" --format="value(selfLink)" | head -1)
 TPL_ALB=$(gcloud compute instance-templates list --filter="name=template-alb-api" --format="value(selfLink)" | head -1)
 
@@ -49,9 +60,9 @@ export TPL_ALB=$TPL_ALB
 EOF
 echo; echo "===== YOUR LAB VALUES ====="; cat ~/lab.env
 
-# --- Block 2: internal backends + firewall rules ---
 source ~/lab.env
 
+# --- Block 2: internal backends + firewall rules ---
 gcloud compute instance-groups managed create mig-proxy-internal \
   --region=$REGION_B --template=$TPL_PROXY --size=2
 gcloud compute instance-groups managed set-named-ports mig-proxy-internal \
@@ -75,8 +86,21 @@ gcloud compute networks subnets list --network=$NETWORK \
 || gcloud compute networks subnets create proxy-only-subnet --network=$NETWORK \
   --region=$REGION_B --range=10.129.0.0/23 --purpose=REGIONAL_MANAGED_PROXY --role=ACTIVE
 
+# --- FIX: ip-internal-proxy pehle delete karo, phir banao ---
+gcloud compute addresses delete ip-internal-proxy --region=$REGION_B -q 2>/dev/null
+
 gcloud compute addresses create ip-internal-proxy --region=$REGION_B \
   --subnet=$SUBNET_B --purpose=SHARED_LOADBALANCER_VIP
+
+# --- FIX: verify karo ki IP sahi bana ---
+if gcloud compute addresses describe ip-internal-proxy --region=$REGION_B --quiet 2>/dev/null; then
+  echo "✓ ip-internal-proxy created successfully"
+  gcloud compute addresses describe ip-internal-proxy --region=$REGION_B \
+    --format="value(address,purpose,subnetwork)"
+else
+  echo "✗ ERROR: ip-internal-proxy create nahi hua!"
+  exit 1
+fi
 
 gcloud compute health-checks create tcp tcp-check-internal --region=$REGION_B --port=80
 
@@ -97,7 +121,7 @@ gcloud compute forwarding-rules create rule-internal-proxy --region=$REGION_B \
 
 echo; echo ">>> Click Check my progress: Create a regional internal proxy NLB"
 
-# SUBNET_B galat/missing hai toh lb-network se auto-pick karo
+# --- Client VM ---
 if ! gcloud compute networks subnets describe "$SUBNET_B" --region=$REGION_B --quiet 2>/dev/null; then
   SUBNET_B=$(gcloud compute networks subnets list --network=$NETWORK \
     --filter="region:($REGION_B)" --format="value(name)" | head -1)
@@ -120,13 +144,12 @@ done
 echo; echo ">>> Click Check my progress: Deploy a client VM and validate the access"
 
 # ============================================================
-# TASK 2 : UNCHANGED CONTENT, but NETWORK = default (fix)
+# TASK 2 : UNCHANGED CONTENT, NETWORK = default
 # ============================================================
 echo -e "${YELLOW}TASK 2 : Global ALB (using default network)${NC}"
 
-NETWORK="default"          # <-- FIX: Task 2 default network pe chalega
+NETWORK="default"
 
-# --- Agar template exist nahi karta to khud banao ---
 check_template() {
   if ! gcloud compute instance-templates describe $1 --quiet 2>/dev/null; then
     echo "Template $1 not found, creating it..."
