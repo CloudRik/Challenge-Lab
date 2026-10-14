@@ -1,95 +1,339 @@
+
 #!/bin/bash
-# FULL V8 - Fixed proxy subnet per region + Auto Zone retry
-set +e
-YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
-export PROJECT_ID=$(gcloud config get-value project)
+# GSP539 - Build Global and Regional Load Balancing Solutions
+# Complete single-file script for a fresh Google Skills Boost lab.
+# Creates resources when missing; does not delete existing resources.
 
-read -p "Enter Region A [default: us-east4]: " REGION_A
-REGION_A=${REGION_A:-us-east4}
-read -p "Enter Region B [default: europe-west1]: " REGION_B
-REGION_B=${REGION_B:-europe-west1}
+set -Eeuo pipefail
+trap 'echo "ERROR at line $LINENO. Read the error above; do not rerun blindly."; exit 1' ERR
 
-ZONE_A="${REGION_A}-a"
-ZONE_B="${REGION_B}-b"  # pehle se b pe try karenge
-echo -e "${YELLOW}Using A=$REGION_A | B=$REGION_B${NC}"
+PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
+[[ -n "$PROJECT_ID" && "$PROJECT_ID" != "(unset)" ]] || {
+  echo "ERROR: Start the lab and select its project first."
+  exit 1
+}
 
-NETWORK="default"
-CLIENT_SUBNET=$(gcloud compute networks subnets list --filter="region:$REGION_B AND purpose!=REGIONAL_MANAGED_PROXY" --format="value(name)" | head -n1)
-[ -z "$CLIENT_SUBNET" ] && CLIENT_SUBNET="default"
-PROXY_SUBNET_B=$(gcloud compute networks subnets list --filter="region:$REGION_B AND purpose=REGIONAL_MANAGED_PROXY" --format="value(name)" | head -n1)
+read -rp "Enter Region A: " REGION_A
+read -rp "Enter Region B: " REGION_B
+[[ -n "$REGION_A" && -n "$REGION_B" && "$REGION_A" != "$REGION_B" ]] || {
+  echo "ERROR: Enter two different regions."
+  exit 1
+}
 
-# FIX 1: Agar Region B me proxy-only subnet nahi hai to banao
-if [ -z "$PROXY_SUBNET_B" ]; then
-  echo "Creating proxy-only subnet in $REGION_B..."
-  gcloud compute networks subnets create proxy-subnet-${REGION_B} --purpose=REGIONAL_MANAGED_PROXY --role=ACTIVE --region=$REGION_B --network=$NETWORK --range=10.129.0.0/23 2>/dev/null || \
-  gcloud compute networks subnets create proxy-subnet-${REGION_B} --purpose=REGIONAL_MANAGED_PROXY --role=ACTIVE --region=$REGION_B --network=$NETWORK --range=10.130.0.0/23
-  PROXY_SUBNET_B="proxy-subnet-${REGION_B}"
+NETWORK="lb-network"
+echo "Project=$PROJECT_ID | Region A=$REGION_A | Region B=$REGION_B"
+gcloud config set project "$PROJECT_ID" --quiet
+
+# ---------- HELPERS ----------
+network_exists() {
+  gcloud compute networks describe "$NETWORK" >/dev/null 2>&1
+}
+subnet_in_region() {
+  gcloud compute networks subnets list \
+    --format='value(name,region.basename(),network.basename(),purpose)' |
+  awk -F '\t' -v r="$1" -v n="$NETWORK" \
+    '$2==r && $3==n && $4!="REGIONAL_MANAGED_PROXY" {print $1; exit}'
+}
+ensure_backend_subnet() {
+  local region="$1" cidr="$2" name
+  name="$(subnet_in_region "$region")"
+  if [[ -z "$name" ]]; then
+    name="backend-${region}"
+    gcloud compute networks subnets create "$name" \
+      --network="$NETWORK" --region="$region" --range="$cidr"
+  fi
+  printf '%s' "$name"
+}
+ensure_firewall() {
+  local name="$1"; shift
+  if ! gcloud compute firewall-rules describe "$name" >/dev/null 2>&1; then
+    gcloud compute firewall-rules create "$name" "$@"
+  else
+    echo "Firewall already exists: $name"
+  fi
+}
+ensure_global_template() {
+  local name="$1" tags="$2" startup="$3"
+  if ! gcloud compute instance-templates describe "$name" >/dev/null 2>&1; then
+    gcloud compute instance-templates create "$name" \
+      --machine-type=e2-medium \
+      --network="$NETWORK" \
+      --tags="$tags" \
+      --metadata=startup-script="$startup"
+  else
+    echo "Instance template already exists: $name"
+  fi
+}
+ensure_regional_mig() {
+  local name="$1" region="$2" template="$3" size="$4"
+  if ! gcloud compute instance-groups managed describe "$name" \
+    --region="$region" >/dev/null 2>&1; then
+    gcloud compute instance-groups managed create "$name" \
+      --region="$region" --template="$template" --size="$size"
+  else
+    echo "MIG already exists: $name in $region"
+  fi
+}
+
+# ---------- NETWORK ----------
+if ! network_exists; then
+  gcloud compute networks create "$NETWORK" --subnet-mode=custom
 fi
-echo "Client=$CLIENT_SUBNET Proxy-B=$PROXY_SUBNET_B"
 
-gcloud config set project $PROJECT_ID -q
+SUBNET_A="$(ensure_backend_subnet "$REGION_A" "10.10.1.0/24")"
+SUBNET_B="$(ensure_backend_subnet "$REGION_B" "10.10.2.0/24")"
+echo "Backend subnet A=$SUBNET_A | B=$SUBNET_B"
 
-# Template check + create
-for T in template-proxy-internal template-alb-api; do
-  gcloud compute instance-templates describe $T --quiet 2>/dev/null || \
-  gcloud compute instance-templates create $T --machine-type=e2-medium --network=$NETWORK --tags=tag-proxy-internal,allow-ssh,http-server --metadata=startup-script='#!/bin/bash
-apt-get update -y
+# The internal proxy load balancer requires an ACTIVE proxy-only subnet
+# in Region B and the same VPC network.
+PROXY_SUBNET="$(
+  gcloud compute networks subnets list \
+    --format='value(name,region.basename(),network.basename(),purpose,role)' |
+  awk -F '\t' -v r="$REGION_B" -v n="$NETWORK" \
+    '$2==r && $3==n && $4=="REGIONAL_MANAGED_PROXY" && $5=="ACTIVE" {print $1; exit}'
+)"
+
+if [[ -z "$PROXY_SUBNET" ]]; then
+  if gcloud compute networks subnets describe proxy-only-subnet \
+    --region="$REGION_B" >/dev/null 2>&1; then
+    echo "ERROR: proxy-only-subnet exists but is not detected as ACTIVE."
+    echo "Inspect that subnet in Cloud Console before continuing."
+    exit 1
+  fi
+  gcloud compute networks subnets create proxy-only-subnet \
+    --network="$NETWORK" \
+    --region="$REGION_B" \
+    --range=10.129.0.0/23 \
+    --purpose=REGIONAL_MANAGED_PROXY \
+    --role=ACTIVE
+fi
+
+# ---------- INSTANCE TEMPLATES ----------
+ensure_global_template \
+  "template-proxy-internal" \
+  "tag-proxy-internal" \
+  '#!/bin/bash
+apt-get update
 apt-get install -y nginx
-echo Hello from $(hostname) > /var/www/html/index.html' 2>/dev/null
-done
-sleep 5
+echo "proxy-internal" > /var/www/html/index.html'
 
-# TASK 1
-gcloud compute instance-groups managed delete mig-proxy-internal --region=$REGION_B -q 2>/dev/null; sleep 5
-gcloud compute instance-groups managed create mig-proxy-internal --template=template-proxy-internal --size=2 --region=$REGION_B
-gcloud compute instance-groups managed set-named-ports mig-proxy-internal --region=$REGION_B --named-ports=tcp80:80
+ensure_global_template \
+  "template-alb-api" \
+  "http-server" \
+  '#!/bin/bash
+apt-get update
+apt-get install -y nginx
+echo "Hello from $(hostname)" > /var/www/html/index.html'
 
-gcloud compute firewall-rules delete fw-allow-proxy-health-check -q 2>/dev/null
-gcloud compute firewall-rules create fw-allow-proxy-health-check --network=$NETWORK --allow=tcp:80 --source-ranges=130.211.0.0/22,35.191.0.0/16 --target-tags=tag-proxy-internal
+# ---------- TASK 1.1: REGIONAL MIG + FIREWALLS ----------
+echo "=== TASK 1.1: Internal MIG and firewall rules ==="
 
-gcloud compute firewall-rules delete fw-allow-proxy-only-subnet -q 2>/dev/null
-gcloud compute firewall-rules create fw-allow-proxy-only-subnet --network=$NETWORK --allow=tcp:80 --source-ranges=10.129.0.0/23,10.130.0.0/23 --target-tags=tag-proxy-internal
+ensure_regional_mig \
+  "mig-proxy-internal" "$REGION_B" "template-proxy-internal" 2
 
-gcloud compute addresses delete ip-internal-proxy --region=$REGION_B -q 2>/dev/null
-gcloud compute addresses create ip-internal-proxy --region=$REGION_B --subnet=$CLIENT_SUBNET --purpose=SHARED_LOADBALANCER_VIP
+gcloud compute instance-groups managed set-named-ports \
+  mig-proxy-internal --region="$REGION_B" --named-ports=tcp80:80
 
-gcloud compute health-checks create tcp tcp-check-proxy --port=80 --region=$REGION_B 2>/dev/null
-gcloud compute backend-services delete service-proxy-internal --region=$REGION_B -q 2>/dev/null
-gcloud compute backend-services create service-proxy-internal --load-balancing-scheme=INTERNAL_MANAGED --protocol=TCP --health-checks=tcp-check-proxy --health-checks-region=$REGION_B --region=$REGION_B
-gcloud compute backend-services add-backend service-proxy-internal --instance-group=mig-proxy-internal --instance-group-region=$REGION_B --region=$REGION_B
+ensure_firewall "fw-allow-proxy-health-check" \
+  --network="$NETWORK" \
+  --direction=INGRESS --action=ALLOW \
+  --rules=tcp:80 \
+  --source-ranges=130.211.0.0/22,35.191.0.0/16 \
+  --target-tags=tag-proxy-internal
 
-gcloud compute target-tcp-proxies delete proxy-internal --region=$REGION_B -q 2>/dev/null
-gcloud compute target-tcp-proxies create proxy-internal --backend-service=service-proxy-internal --region=$REGION_B
+ensure_firewall "fw-allow-proxy-only-subnet" \
+  --network="$NETWORK" \
+  --direction=INGRESS --action=ALLOW \
+  --rules=tcp:80 \
+  --source-ranges=10.129.0.0/23 \
+  --target-tags=tag-proxy-internal
 
-gcloud compute forwarding-rules delete rule-internal-proxy --region=$REGION_B -q 2>/dev/null
-gcloud compute forwarding-rules create rule-internal-proxy --region=$REGION_B --load-balancing-scheme=INTERNAL_MANAGED --network=$NETWORK --subnet=$CLIENT_SUBNET --address=ip-internal-proxy --target-tcp-proxy=proxy-internal --target-tcp-proxy-region=$REGION_B --ports=110
+# ---------- TASK 1.2: INTERNAL PROXY NETWORK LOAD BALANCER ----------
+echo "=== TASK 1.2: Internal proxy NLB ==="
 
-# FIX 2: Client VM - zone b,c,d try karo
-for Z in ${REGION_B}-b ${REGION_B}-c ${REGION_B}-a; do
-  gcloud compute instances delete vm-client-internal --zone=$Z -q 2>/dev/null
-  gcloud compute instances create vm-client-internal --zone=$Z --machine-type=e2-micro --network-interface=network=$NETWORK,subnet=$CLIENT_SUBNET --tags=allow-ssh && ZONE_B=$Z && break
-done
+if ! gcloud compute health-checks describe tcp-check-proxy \
+  --region="$REGION_B" >/dev/null 2>&1; then
+  gcloud compute health-checks create tcp tcp-check-proxy \
+    --region="$REGION_B" --port=80
+fi
 
-# TASK 2
-gcloud compute instance-groups managed delete mig-alb-api-a --region=$REGION_A -q 2>/dev/null
-gcloud compute instance-groups managed create mig-alb-api-a --template=template-alb-api --size=1 --region=$REGION_A
-gcloud compute instance-groups managed set-named-ports mig-alb-api-a --region=$REGION_A --named-ports=http80:80
+if ! gcloud compute addresses describe ip-internal-proxy \
+  --region="$REGION_B" >/dev/null 2>&1; then
+  gcloud compute addresses create ip-internal-proxy \
+    --region="$REGION_B" \
+    --subnet="$SUBNET_B" \
+    --purpose=SHARED_LOADBALANCER_VIP
+fi
 
-gcloud compute instance-groups managed delete mig-alb-api-b --region=$REGION_B -q 2>/dev/null
-gcloud compute instance-groups managed create mig-alb-api-b --template=template-alb-api --size=1 --region=$REGION_B
-gcloud compute instance-groups managed set-named-ports mig-alb-api-b --region=$REGION_B --named-ports=http80:80
+if ! gcloud compute backend-services describe service-proxy-internal \
+  --region="$REGION_B" >/dev/null 2>&1; then
+  gcloud compute backend-services create service-proxy-internal \
+    --region="$REGION_B" \
+    --load-balancing-scheme=INTERNAL_MANAGED \
+    --protocol=TCP \
+    --health-checks=tcp-check-proxy \
+    --health-checks-region="$REGION_B"
+fi
 
-gcloud compute health-checks create http http-check-alb --port=80 --global 2>/dev/null
-gcloud compute backend-services create service-alb-global --protocol=HTTP --health-checks=http-check-alb --global 2>/dev/null
-gcloud compute backend-services add-backend service-alb-global --instance-group=mig-alb-api-a --instance-group-region=$REGION_A --balancing-mode=RATE --max-rate-per-instance=1 --global 2>/dev/null
-gcloud compute backend-services add-backend service-alb-global --instance-group=mig-alb-api-b --instance-group-region=$REGION_B --balancing-mode=RATE --max-rate-per-instance=1 --global 2>/dev/null
+if ! gcloud compute backend-services describe service-proxy-internal \
+  --region="$REGION_B" --format=json | grep -q 'mig-proxy-internal'; then
+  gcloud compute backend-services add-backend service-proxy-internal \
+    --region="$REGION_B" \
+    --instance-group=mig-proxy-internal \
+    --instance-group-region="$REGION_B"
+fi
 
-rm -f key.pem cert.pem; openssl genrsa -out key.pem 2048 2>/dev/null; openssl req -new -x509 -key key.pem -out cert.pem -days 1 -subj "/CN=example.com" 2>/dev/null
-gcloud compute ssl-certificates create cert-self-signed --certificate=cert.pem --private-key=key.pem --global 2>/dev/null
-gcloud compute addresses create ip-alb-global --global 2>/dev/null
-gcloud compute url-maps create map-alb-global --default-service=service-alb-global --global 2>/dev/null
-gcloud compute target-https-proxies create https-proxy-alb-global --url-map=map-alb-global --ssl-certificates=cert-self-signed --global 2>/dev/null
-gcloud compute forwarding-rules create rule-alb-global-https --global --target-https-proxy=https-proxy-alb-global --address=ip-alb-global --ports=443 2>/dev/null
-gcloud compute firewall-rules create fw-allow-health-check-and-proxy --network=$NETWORK --allow=tcp:80 --source-ranges=130.211.0.0/22,35.191.0.0/16 2>/dev/null
+if ! gcloud compute target-tcp-proxies describe proxy-internal \
+  --region="$REGION_B" >/dev/null 2>&1; then
+  gcloud compute target-tcp-proxies create proxy-internal \
+    --region="$REGION_B" \
+    --backend-service=service-proxy-internal
+fi
 
-echo -e "${GREEN}DONE! Ab 2 min ruk ke Check My Progress dabao - Ab 100 ayega${NC}"
+if ! gcloud compute forwarding-rules describe rule-internal-proxy \
+  --region="$REGION_B" >/dev/null 2>&1; then
+  gcloud compute forwarding-rules create rule-internal-proxy \
+    --region="$REGION_B" \
+    --load-balancing-scheme=INTERNAL_MANAGED \
+    --network="$NETWORK" \
+    --subnet="$SUBNET_B" \
+    --address=ip-internal-proxy \
+    --target-tcp-proxy=proxy-internal \
+    --target-tcp-proxy-region="$REGION_B" \
+    --ports=110
+fi
+
+# ---------- TASK 1.3: CLIENT VM ----------
+echo "=== TASK 1.3: Client VM ==="
+
+ZONE_B="$(gcloud compute zones list \
+  --filter="region:($REGION_B) AND status=UP" \
+  --format='value(name)' | head -n 1)"
+[[ -n "$ZONE_B" ]] || { echo "ERROR: No available zone in $REGION_B"; exit 1; }
+
+if ! gcloud compute instances describe vm-client-internal \
+  --zone="$ZONE_B" >/dev/null 2>&1; then
+  gcloud compute instances create vm-client-internal \
+    --zone="$ZONE_B" \
+    --machine-type=e2-micro \
+    --network="$NETWORK" \
+    --subnet="$SUBNET_B" \
+    --tags=allow-ssh
+fi
+
+ensure_firewall "fw-allow-ssh-client" \
+  --network="$NETWORK" \
+  --direction=INGRESS --action=ALLOW \
+  --rules=tcp:22 \
+  --source-ranges=35.235.240.0/20 \
+  --target-tags=allow-ssh
+
+# ---------- TASK 2.1: TWO REGIONAL MIGS ----------
+echo "=== TASK 2.1: Global ALB backend MIGs ==="
+
+ensure_regional_mig "mig-alb-api-a" "$REGION_A" "template-alb-api" 1
+gcloud compute instance-groups managed set-named-ports \
+  mig-alb-api-a --region="$REGION_A" --named-ports=http80:80
+
+ensure_regional_mig "mig-alb-api-b" "$REGION_B" "template-alb-api" 1
+gcloud compute instance-groups managed set-named-ports \
+  mig-alb-api-b --region="$REGION_B" --named-ports=http80:80
+
+# ---------- TASK 2.2: GLOBAL BACKEND SERVICE ----------
+echo "=== TASK 2.2: Global backend service ==="
+
+if ! gcloud compute health-checks describe http-check-alb \
+  --global >/dev/null 2>&1; then
+  gcloud compute health-checks create http http-check-alb \
+    --port=80 --global
+fi
+
+if ! gcloud compute backend-services describe service-alb-global \
+  --global >/dev/null 2>&1; then
+  gcloud compute backend-services create service-alb-global \
+    --protocol=HTTP \
+    --health-checks=http-check-alb \
+    --global
+fi
+
+if ! gcloud compute backend-services describe service-alb-global \
+  --global --format=json | grep -q 'mig-alb-api-a'; then
+  gcloud compute backend-services add-backend service-alb-global \
+    --global \
+    --instance-group=mig-alb-api-a \
+    --instance-group-region="$REGION_A" \
+    --balancing-mode=RATE \
+    --max-rate-per-instance=1
+fi
+
+if ! gcloud compute backend-services describe service-alb-global \
+  --global --format=json | grep -q 'mig-alb-api-b'; then
+  gcloud compute backend-services add-backend service-alb-global \
+    --global \
+    --instance-group=mig-alb-api-b \
+    --instance-group-region="$REGION_B" \
+    --balancing-mode=RATE \
+    --max-rate-per-instance=1
+fi
+
+# ---------- TASK 2.3: GLOBAL HTTPS FRONTEND ----------
+echo "=== TASK 2.3: Global HTTPS frontend ==="
+
+if ! gcloud compute ssl-certificates describe cert-self-signed \
+  --global >/dev/null 2>&1; then
+  openssl genrsa -out key.pem 2048
+  openssl req -new -x509 -key key.pem -out cert.pem \
+    -days 1 -subj "/CN=example.com"
+  gcloud compute ssl-certificates create cert-self-signed \
+    --certificate=cert.pem --private-key=key.pem --global
+fi
+
+if ! gcloud compute addresses describe ip-alb-global \
+  --global >/dev/null 2>&1; then
+  gcloud compute addresses create ip-alb-global --global
+fi
+
+if ! gcloud compute url-maps describe map-alb-global \
+  --global >/dev/null 2>&1; then
+  gcloud compute url-maps create map-alb-global \
+    --default-service=service-alb-global --global
+fi
+
+if ! gcloud compute target-https-proxies describe https-proxy-alb-global \
+  --global >/dev/null 2>&1; then
+  gcloud compute target-https-proxies create https-proxy-alb-global \
+    --url-map=map-alb-global \
+    --ssl-certificates=cert-self-signed \
+    --global
+fi
+
+if ! gcloud compute forwarding-rules describe rule-alb-global-https \
+  --global >/dev/null 2>&1; then
+  gcloud compute forwarding-rules create rule-alb-global-https \
+    --global \
+    --target-https-proxy=https-proxy-alb-global \
+    --address=ip-alb-global \
+    --ports=443
+fi
+
+# ---------- TASK 2.4: GLOBAL HEALTH-CHECK FIREWALL ----------
+ensure_firewall "fw-allow-health-check-and-proxy" \
+  --network="$NETWORK" \
+  --direction=INGRESS --action=ALLOW \
+  --rules=tcp:80 \
+  --source-ranges=130.211.0.0/22,35.191.0.0/16
+
+# ---------- SUMMARY ----------
+echo
+echo "=== RESOURCE SETUP FINISHED ==="
+echo "Project: $PROJECT_ID"
+echo "Internal load balancer IP:"
+gcloud compute addresses describe ip-internal-proxy \
+  --region="$REGION_B" --format='value(address)'
+echo "Global HTTPS load balancer IP:"
+gcloud compute addresses describe ip-alb-global \
+  --global --format='value(address)'
+echo
+echo "Wait a few minutes for VM startup and health checks."
+echo "This message confirms commands finished, not that every lab checker passed."
+echo "Use Check my progress in the lab for the actual score."
