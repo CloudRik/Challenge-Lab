@@ -15,7 +15,7 @@ read -p "Enter Region B [default: us-east4]: " REGION_B
 REGION_B=${REGION_B:-us-east4}
 
 ZONE_A="${REGION_A}-a"
-ZONE_B="${REGION_B}-a"
+ZONE_B=$(gcloud compute zones list --filter="region:($REGION_B)" --format="value(name)" | sort | head -1)
 echo -e "${YELLOW}Using A=$REGION_A ($ZONE_A) | B=$REGION_B ($ZONE_B)${NC}"
 
 gcloud config set project $PROJECT_ID -q
@@ -96,6 +96,13 @@ gcloud compute forwarding-rules create rule-internal-proxy --region=$REGION_B \
   --target-tcp-proxy=tcp-proxy-internal --target-tcp-proxy-region=$REGION_B
 
 echo; echo ">>> Click Check my progress: Create a regional internal proxy NLB"
+
+# SUBNET_B galat/missing hai toh lb-network se auto-pick karo
+if ! gcloud compute networks subnets describe "$SUBNET_B" --region=$REGION_B --quiet 2>/dev/null; then
+  SUBNET_B=$(gcloud compute networks subnets list --network=$NETWORK \
+    --filter="region:($REGION_B)" --format="value(name)" | head -1)
+  echo "SUBNET_B auto-detected: $SUBNET_B"
+fi
 
 gcloud compute instances create vm-client-internal --zone=$ZONE_B \
   --network=$NETWORK --subnet=$SUBNET_B --tags=allow-ssh \
