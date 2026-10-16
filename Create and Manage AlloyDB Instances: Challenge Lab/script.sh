@@ -1,225 +1,290 @@
 #!/bin/bash
+# Create and Manage AlloyDB Instances - Universal Automated Script
+set +e
 
-# Colors
-CYAN='\033[0;96m'
-GREEN='\033[0;92m'
-YELLOW='\033[0;93m'
-RED='\033[0;91m'
-MAGENTA='\033[0;95m'
-BLUE='\033[0;94m'
-WHITE='\033[0;97m'
-BOLD='\033[1m'
-RESET='\033[0m'
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 
-clear
-echo
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo "${CYAN}${BOLD}   CREATE & MANAGE ALLOYDB INSTANCES (GSP1083)  ${RESET}"
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 
-# ===============================
-# ENVIRONMENT DETECTION
-# ===============================
-PROJECT=$(gcloud config get-value project 2>/dev/null)
+echo -e "${CYAN}"
+echo "============================================================"
+echo "  🎮 Create and Manage AlloyDB Instances - Automated"
+echo "  🎬 Presented By ArcadeSuite"
+echo "  📺 YouTube: @imasis-k8x"
+echo "============================================================"
+echo -e "${NC}"
 
-REGION=$(gcloud compute project-info describe \
-  --format="value(commonInstanceMetadata.items[google-compute-default-region])" 2>/dev/null)
+# ============================================================
+# USER INPUT (Lab panel se copy karo)
+# ============================================================
+export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+echo -e "${YELLOW}Current Project: ${GREEN}$PROJECT_ID${NC}"
+echo ""
 
-if [ -z "$REGION" ]; then
-  echo "${RED}Could not auto-detect region.${RESET}"
-  read -p "Enter your region (e.g., us-central1): " REGION
-fi
+echo -e "${YELLOW}⚠️  Lab panel se ye values EXACT copy karo:${NC}"
+echo ""
 
-echo "${BLUE}Project: ${WHITE}$PROJECT${RESET}"
-echo "${BLUE}Region:  ${WHITE}$REGION${RESET}"
-echo
+read -p "GCP Region (e.g., us-central1): " REGION
+while [ -z "$REGION" ]; do
+  echo -e "${RED}Region cannot be empty!${NC}"
+  read -p "GCP Region: " REGION
+done
 
-# ===============================
-# TASK 1: Create cluster + instance
-# ===============================
-echo "${GREEN}${BOLD}Task 1: Creating AlloyDB cluster + instance${RESET}"
-echo "${WHITE}This will take 9-13 minutes...${RESET}"
-echo
+read -p "Cluster ID [default: lab-cluster]: " CLUSTER_ID
+CLUSTER_ID=${CLUSTER_ID:-lab-cluster}
 
-if gcloud beta alloydb clusters describe lab-cluster --region=$REGION &>/dev/null; then
-  echo "${YELLOW}Cluster lab-cluster already exists, skipping...${RESET}"
+read -p "Cluster Password [default: Change3Me]: " DB_PASSWORD
+DB_PASSWORD=${DB_PASSWORD:-Change3Me}
+
+read -p "Network [default: peering-network]: " NETWORK
+NETWORK=${NETWORK:-peering-network}
+
+read -p "Primary Instance ID [default: lab-instance]: " INSTANCE_ID
+INSTANCE_ID=${INSTANCE_ID:-lab-instance}
+
+read -p "Read Pool Instance ID [default: lab-instance-rp1]: " RP_INSTANCE_ID
+RP_INSTANCE_ID=${RP_INSTANCE_ID:-lab-instance-rp1}
+
+read -p "Backup ID [default: lab-backup]: " BACKUP_ID
+BACKUP_ID=${BACKUP_ID:-lab-backup}
+
+echo ""
+echo -e "${CYAN}=====================================${NC}"
+echo -e "${CYAN}  Project:    $PROJECT_ID${NC}"
+echo -e "${CYAN}  Region:     $REGION${NC}"
+echo -e "${CYAN}  Cluster:    $CLUSTER_ID${NC}"
+echo -e "${CYAN}  Instance:   $INSTANCE_ID${NC}"
+echo -e "${CYAN}  Read Pool:  $RP_INSTANCE_ID${NC}"
+echo -e "${CYAN}  Backup:     $BACKUP_ID${NC}"
+echo -e "${CYAN}=====================================${NC}"
+echo ""
+
+read -p "Confirm? (y/n): " CONFIRM
+[ "$CONFIRM" != "y" ] && { echo "Aborting."; exit 1; }
+
+# Save for later
+cat > ~/alloydb.env <<EOF
+export PROJECT_ID=$PROJECT_ID
+export REGION=$REGION
+export CLUSTER_ID=$CLUSTER_ID
+export DB_PASSWORD=$DB_PASSWORD
+export NETWORK=$NETWORK
+export INSTANCE_ID=$INSTANCE_ID
+export RP_INSTANCE_ID=$RP_INSTANCE_ID
+export BACKUP_ID=$BACKUP_ID
+EOF
+
+# ============================================================
+# TASK 1 — Cluster + Primary Instance
+# ============================================================
+echo ""
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  TASK 1 : Cluster + Primary Instance${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+
+# Check if cluster exists
+if gcloud beta alloydb clusters describe $CLUSTER_ID --region=$REGION --quiet 2>/dev/null; then
+  echo -e "${GREEN}✓ Cluster already exists${NC}"
 else
-  gcloud beta alloydb clusters create lab-cluster \
-    --password=Change3Me \
-    --network=peering-network \
+  echo "Creating cluster $CLUSTER_ID..."
+  gcloud beta alloydb clusters create $CLUSTER_ID \
+    --password=$DB_PASSWORD \
+    --network=$NETWORK \
     --region=$REGION \
-    --project=$PROJECT \
-    --quiet
+    --project=$PROJECT_ID
+
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}✗ Cluster create failed!${NC}"
+    echo -e "${YELLOW}Possible reasons:${NC}"
+    echo "  1. Region me AlloyDB resources nahi hain"
+    echo "  2. Network 'peering-network' exist nahi karta"
+    echo "  3. Permission issue"
+    exit 1
+  fi
+  echo -e "${GREEN}✓ Cluster created${NC}"
 fi
 
-if gcloud beta alloydb instances describe lab-instance --cluster=lab-cluster --region=$REGION &>/dev/null; then
-  echo "${YELLOW}Instance lab-instance already exists, skipping...${RESET}"
+sleep 15
+
+# Check if instance exists
+if gcloud beta alloydb instances describe $INSTANCE_ID --region=$REGION --cluster=$CLUSTER_ID --quiet 2>/dev/null; then
+  echo -e "${GREEN}✓ Instance already exists${NC}"
 else
-  gcloud beta alloydb instances create lab-instance \
+  echo "Creating primary instance $INSTANCE_ID..."
+  gcloud beta alloydb instances create $INSTANCE_ID \
     --instance-type=PRIMARY \
     --cpu-count=2 \
     --region=$REGION \
-    --cluster=lab-cluster \
-    --project=$PROJECT \
-    --quiet
-fi
+    --cluster=$CLUSTER_ID \
+    --project=$PROJECT_ID
 
-echo "${GREEN}Task 1 complete${RESET}"
-echo
-
-echo "${YELLOW}Waiting for cluster to be READY...${RESET}"
-for i in {1..90}; do
-  STATUS=$(gcloud beta alloydb clusters describe lab-cluster --region=$REGION --format="value(state)" 2>/dev/null)
-  if [ "$STATUS" = "READY" ]; then
-    break
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}✗ Instance create failed!${NC}"
+    exit 1
   fi
-  sleep 20
-done
-
-ALLOYDB_IP=$(gcloud beta alloydb instances describe lab-instance \
-  --cluster=lab-cluster \
-  --region=$REGION \
-  --format="value(ipAddress)" 2>/dev/null | head -n 1)
-
-if [ -z "$ALLOYDB_IP" ]; then
-  read -p "Enter AlloyDB Private IP manually: " ALLOYDB_IP
+  echo -e "${GREEN}✓ Instance created${NC}"
 fi
 
-echo "${BLUE}AlloyDB Private IP: ${WHITE}$ALLOYDB_IP${RESET}"
-echo
+sleep 10
 
-# ===============================
-# TASK 2 & 3: Create tables + Load data
-# ===============================
-echo "${GREEN}${BOLD}Task 2 & 3: Creating tables and loading data${RESET}"
+# Get Private IP
+ALLOYDB_IP=$(gcloud beta alloydb instances describe $INSTANCE_ID \
+  --region=$REGION \
+  --cluster=$CLUSTER_ID \
+  --format="value(ipAddress)")
 
-VM_ZONE=$(gcloud compute instances list --filter="name:alloydb-client" --format="value(zone)" 2>/dev/null | head -n 1)
+echo ""
+echo -e "${GREEN}✓ Private IP: ${YELLOW}$ALLOYDB_IP${NC}"
+echo "$ALLOYDB_IP" > ~/alloydb_ip.txt
+echo ""
+echo -e "${YELLOW}>>> Click 'Check my progress' for Task 1${NC}"
+read -p "Press ENTER after clicking..."
+
+# ============================================================
+# TASK 2 + 3 — Tables + Data Load (via SSH)
+# ============================================================
+echo ""
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  TASK 2 + 3 : Tables + Data Load${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+
+# Find alloydb-client VM
+VM_ZONE=$(gcloud compute instances list --filter="name=alloydb-client" --format="value(zone.basename())" | head -1)
 
 if [ -z "$VM_ZONE" ]; then
-  read -p "Enter alloydb-client VM zone: " VM_ZONE
+  echo -e "${RED}✗ VM 'alloydb-client' nahi mila!${NC}"
+  exit 1
 fi
 
-echo "${BLUE}VM Zone: ${WHITE}$VM_ZONE${RESET}"
-echo
+echo "alloydb-client zone: $VM_ZONE"
 
-echo "${WHITE}Creating tables and loading data on VM...${RESET}"
+# SSH + create tables + load data
+gcloud compute ssh alloydb-client --zone=$VM_ZONE --quiet --command="
+export ALLOYDB=$ALLOYDB_IP
+echo \$ALLOYDB > alloydbip.txt
 
-gcloud compute ssh alloydb-client --zone=$VM_ZONE --command="
-  export ALLOYDB=$ALLOYDB_IP
-  echo \$ALLOYDB > alloydbip.txt
+# Install psql if needed
+which psql > /dev/null 2>&1 || (sudo apt update -qq && sudo apt install -y postgresql-client -qq)
 
-  PGPASSWORD=Change3Me psql -h \$ALLOYDB -U postgres <<'SQL_END'
-CREATE TABLE regions (
+# Wait
+sleep 20
+
+# Create tables + data
+PGPASSWORD=$DB_PASSWORD psql -h \$ALLOYDB -U postgres -d postgres <<'SQLEOF'
+CREATE TABLE IF NOT EXISTS regions (
   region_id bigint NOT NULL,
   region_name varchar(25)
 );
 ALTER TABLE regions ADD PRIMARY KEY (region_id);
 
-CREATE TABLE countries (
+CREATE TABLE IF NOT EXISTS countries (
   country_id char(2) NOT NULL,
   country_name varchar(40),
   region_id bigint
 );
 ALTER TABLE countries ADD PRIMARY KEY (country_id);
 
-CREATE TABLE departments (
+CREATE TABLE IF NOT EXISTS departments (
   department_id smallint NOT NULL,
   department_name varchar(30),
   manager_id integer,
   location_id smallint
 );
 ALTER TABLE departments ADD PRIMARY KEY (department_id);
-SQL_END
 
-  PGPASSWORD=Change3Me psql -h \$ALLOYDB -U postgres <<'SQL_END'
 INSERT INTO regions VALUES
-  (1, 'Europe'), (2, 'Americas'), (3, 'Asia'), (4, 'Middle East and Africa');
+(1, 'Europe'),(2, 'Americas'),(3, 'Asia'),(4, 'Middle East and Africa')
+ON CONFLICT DO NOTHING;
 
 INSERT INTO countries VALUES
-  ('IT', 'Italy', 1), ('JP', 'Japan', 3), ('US', 'United States of America', 2),
-  ('CA', 'Canada', 2), ('CN', 'China', 3), ('IN', 'India', 3),
-  ('AU', 'Australia', 3), ('ZW', 'Zimbabwe', 4), ('SG', 'Singapore', 3);
+('IT','Italy',1),('JP','Japan',3),('US','United States of America',2),
+('CA','Canada',2),('CN','China',3),('IN','India',3),('AU','Australia',3),
+('ZW','Zimbabwe',4),('SG','Singapore',3)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO departments VALUES
-  (10, 'Administration', 200, 1700),
-  (20, 'Marketing', 201, 1800),
-  (30, 'Purchasing', 114, 1700),
-  (40, 'Human Resources', 203, 2400),
-  (50, 'Shipping', 121, 1500),
-  (60, 'IT', 103, 1400);
-SQL_END
+(10,'Administration',200,1700),(20,'Marketing',201,1800),
+(30,'Purchasing',114,1700),(40,'Human Resources',203,2400),
+(50,'Shipping',121,1500),(60,'IT',103,1400)
+ON CONFLICT DO NOTHING;
 
-  echo '--- Tables ---'
-  PGPASSWORD=Change3Me psql -h \$ALLOYDB -U postgres -c '\dt'
-" --quiet
+SELECT 'regions' as tbl, COUNT(*) FROM regions
+UNION ALL SELECT 'countries', COUNT(*) FROM countries
+UNION ALL SELECT 'departments', COUNT(*) FROM departments;
+SQLEOF
+" 2>/dev/null
 
-echo "${GREEN}Task 2 & 3 complete${RESET}"
-echo
+echo -e "${GREEN}✓ Tables + data done${NC}"
+echo ""
+echo -e "${YELLOW}>>> Click 'Check my progress' for Task 2 and 3${NC}"
+read -p "Press ENTER after clicking..."
 
-# ===============================
-# TASK 4: Create Read Pool instance
-# ===============================
-echo "${MAGENTA}${BOLD}Task 4: Creating Read Pool instance (lab-instance-rp1)${RESET}"
-echo "${WHITE}This will take 5-8 minutes...${RESET}"
+# ============================================================
+# TASK 4 — Read Pool Instance
+# ============================================================
+echo ""
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  TASK 4 : Read Pool Instance${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
 
-if gcloud beta alloydb instances describe lab-instance-rp1 --cluster=lab-cluster --region=$REGION &>/dev/null; then
-  echo "${YELLOW}Read Pool already exists, skipping...${RESET}"
+if gcloud beta alloydb instances describe $RP_INSTANCE_ID --region=$REGION --cluster=$CLUSTER_ID --quiet 2>/dev/null; then
+  echo -e "${GREEN}✓ Read Pool already exists${NC}"
 else
-  gcloud beta alloydb instances create lab-instance-rp1 \
+  gcloud beta alloydb instances create $RP_INSTANCE_ID \
     --instance-type=READ_POOL \
     --cpu-count=2 \
     --read-pool-node-count=2 \
     --region=$REGION \
-    --cluster=lab-cluster \
-    --project=$PROJECT \
-    --quiet
+    --cluster=$CLUSTER_ID \
+    --project=$PROJECT_ID
+
+  [ $? -eq 0 ] && echo -e "${GREEN}✓ Read Pool created${NC}" || echo -e "${RED}✗ Read Pool failed${NC}"
 fi
 
-echo "${GREEN}Task 4 complete${RESET}"
-echo
+echo ""
+echo -e "${YELLOW}>>> Click 'Check my progress' for Task 4${NC}"
+read -p "Press ENTER after clicking..."
 
-# ===============================
-# TASK 5: SKIP (Run manually)
-# ===============================
-echo "${YELLOW}${BOLD}=================================================${RESET}"
-echo "${YELLOW}${BOLD}   TASK 5: RUN MANUALLY (Auth token issue)${RESET}"
-echo "${YELLOW}${BOLD}=================================================${RESET}"
-echo
-echo "${WHITE}Task 5 (Backup) ke liye yeh command chalao:${RESET}"
-echo
-echo "${GREEN}gcloud beta alloydb backups create lab-backup \\${RESET}"
-echo "${GREEN}  --cluster=lab-cluster \\${RESET}"
-echo "${GREEN}  --region=$REGION \\${RESET}"
-echo "${GREEN}  --project=$PROJECT \\${RESET}"
-echo "${GREEN}  --quiet${RESET}"
-echo
-echo "${WHITE}Ya Console se:${RESET}"
-echo "  AlloyDB → Backups → Create backup → lab-backup → Create"
-echo
+# ============================================================
+# TASK 5 — Backup
+# ============================================================
+echo ""
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  TASK 5 : Backup${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
 
-# ===============================
-# VERIFICATION
-# ===============================
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo "${CYAN}${BOLD}   VERIFICATION${RESET}"
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo
+gcloud beta alloydb backups create $BACKUP_ID \
+  --cluster=$CLUSTER_ID \
+  --region=$REGION \
+  --project=$PROJECT_ID
 
-echo "${YELLOW}AlloyDB clusters:${RESET}"
-gcloud beta alloydb clusters list
-echo
+[ $? -eq 0 ] && echo -e "${GREEN}✓ Backup created${NC}" || echo -e "${RED}✗ Backup failed${NC}"
 
-echo "${YELLOW}AlloyDB instances:${RESET}"
-gcloud beta alloydb instances list --cluster=lab-cluster --region=$REGION
-echo
+echo ""
+echo -e "${YELLOW}>>> Click 'Check my progress' for Task 5${NC}"
 
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo "${CYAN}${BOLD}   TASK 1-4 COMPLETED${RESET}"
-echo "${CYAN}${BOLD}=================================================${RESET}"
-echo
-echo "${WHITE}Now:${RESET}"
-echo "  1. Task 1, 2, 3, 4 ke Check my progress click karo"
-echo "  2. Task 5 manually chalao (upar wali command)"
-echo "  3. Task 5 Check my progress click karo"
-echo
+# ============================================================
+# FINAL BANNER
+# ============================================================
+echo ""
+echo -e "${GREEN}"
+cat << "EOF"
+  _____                      _      _       
+ / ____|                    | |    | |      
+| |     ___  _ __ ___  _ __ | | ___| |_ ___ 
+| |    / _ \| '_ ` _ \| '_ \| |/ _ \ __/ _ \
+| |___| (_) | | | | | | |_) | |  __/ ||  __/
+ \_____\___/|_| |_| |_| .__/|_|\___|\__\___|
+                      | |                    
+                      |_|                    
+EOF
+echo -e "${NC}"
+echo -e "${YELLOW}🎉 ALL TASKS COMPLETED! 🎉${NC}"
+echo -e "${CYAN}============================================================${NC}"
+echo -e "${GREEN}🎬 Presented By ArcadeSuite${NC}"
+echo -e "${CYAN}📺 YouTube: https://youtube.com/@imasis-k8x${NC}"
+echo -e "${CYAN}💻 GitHub:  https://github.com/CloudRik${NC}"
+echo -e "${YELLOW}🏆 Arcade Points: https://arcadesuite.pages.dev/${NC}"
+echo -e "${CYAN}============================================================${NC}"
+echo ""
