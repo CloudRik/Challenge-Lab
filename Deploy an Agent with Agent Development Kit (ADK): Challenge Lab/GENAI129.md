@@ -129,13 +129,6 @@ adk run paint_agent
 
   <br>
 
-> And Then Run This Command
-
-```bash
-sed -i 's/tool_context.state\[key\] = value/tool_context.state[key] = value\n    return f"stored {value} in {key}"/' paint_agent/tools.py
-```
-<br>
-
 
 ### 🔹 TASK- 4 Run This Command or Follow The Video
 
