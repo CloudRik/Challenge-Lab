@@ -97,6 +97,7 @@ nano paint_agent/agent.py
 #### 3.3 — Edit It : Find The Line - sub_agents=[
 
 ```bash
+sub_agents=[room_planner_agent],
 tools=[
         AgentTool(agent=search_agent),
         set_session_value,
