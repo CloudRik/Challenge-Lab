@@ -14,102 +14,37 @@
 
 ---
 
-## ⚡ STEP-BY-STEP SOLUTION
+## 🔥 JUST 3 COMMANDS
 
 <br>
 
-### 🔹 STEP 1 — Run the automation script
+### 🔹 PART-1
 
 ```bash
-curl -sSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build%20Global%20and%20Regional%20Load%20Balancing%20Solutions%3A%20Challenge%20Lab/script2.sh" -o script2.sh && bash script2.sh
+curl -sSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build%20Global%20and%20Regional%20Load%20Balancing%20Solutions%3A%20Challenge%20Lab%202nd%20Edition/part1.sh" -o part1.sh && bash part1.sh
 ```
-
-> ⚠️ **Note:** Jab prompt aaye, lab panel se **Region A** aur **Region B** daalna.
-
-<br>
-
----
-
-
 
 <br>
 
 ---
 
-### 🔹 STEP 2 — Task 3: Failover Test
-
-#### 2.1 — Find the Load Balancer IP
+### 🔹 PART-2 
 
 ```bash
-gcloud compute forwarding-rules describe rule-alb-global-https --global --format="value(IPAddress)"
+curl -sSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build%20Global%20and%20Regional%20Load%20Balancing%20Solutions%3A%20Challenge%20Lab%202nd%20Edition/part2.sh" -o part2.sh && bash part2.sh
 ```
 
-#### 2.2 — Observe global distribution
-
-Copy the IP from Step 3.1 and replace `YOUR_LB_IP` below:
-
-```bash
-while true; do curl -k -s https://YOUR_LB_IP | grep "Hello from"; sleep 0.5; done
-```
-
-You should see responses **alternating between Region A and Region B**.
-
-Press **Ctrl+C** to stop.
-
-#### 2.3 — Simulate backend failure
-
-1. Open **GCP Console → Compute Engine → VM instances**
-2. Find the VM named **`mig-alb-api-a-xxxx`**
-3. Click the **SSH** button
-4. In the SSH terminal, run:
-
-```bash
-sudo systemctl stop nginx
-```
-
-#### 2.4 — Verify failover
-
-Run the curl loop again — you should now see **only Region B** responses:
-
-```bash
-while true; do curl -k -s https://YOUR_LB_IP | grep "Hello from"; sleep 0.5; done
-```
-
-#### 2.5 — Check Monitoring tab
-
-Go to **Network Services → Load Balancing** → click your LB → **Monitoring tab**.
-
-You should see:
-- **Region A** request line drops to **zero**
-- **Region B** request line spikes
-
-#### 2.6 — Click **Check my progress**
-
-Score → **100/100** ✅
 
 <br>
 
 ---
 
-## ⚠️ Troubleshooting
+### 🔹 PART-3
 
-| Problem | Solution |
-|---------|----------|
-| `404 Not Found` on script download | URL me `%3A` (colon) aur `%20` (space) sahi check karo |
-| `already exists` error | Purane resources delete karo ya naya lab start karo |
-| `Permission denied on zone` | Zone galat hai — `gcloud compute zones list` se check karo |
-| Task 1 ka 2nd step (0/30) | `ip-internal-proxy` galat subnet me bana |
-| Task 1 ka 3rd step fail | `vm-client-internal` create nahi hua — subnet/zone check karo |
+```bash
+curl -sSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build%20Global%20and%20Regional%20Load%20Balancing%20Solutions%3A%20Challenge%20Lab%202nd%20Edition/part3.sh" -o part3.sh && bash part3.sh
+```
 
-<br>
-
----
-
-## 🔗 Resources
-
-- 📘 [GCP Internal Proxy NLB Docs](https://cloud.google.com/load-balancing/docs/tcp/internal-proxy)
-- 📘 [GCP Global External ALB Docs](https://cloud.google.com/load-balancing/docs/https)
-- 📘 [GCP Backend Failover Docs](https://cloud.google.com/load-balancing/docs/backend-service#failover)
 
 <br>
 
