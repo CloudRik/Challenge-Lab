@@ -1,0 +1,126 @@
+<h1 align="center">🎮 Build Global and Regional Load Balancing Solutions: Challenge Lab</h1>
+
+<h2 align="center">🔥 SOLUTION BY IMASIS 🔥</h2>
+
+<br>
+
+<h3>🌐 Connect With Me</h3>
+
+- <img src="https://raw.githubusercontent.com/github/explore/main/topics/youtube/youtube.png" width="25" height="25" valign="middle"> **YouTube** — [@imasis-k8x](https://youtube.com/@imasis-k8x?si=lO3ixe-KbnN1nNBG)
+- <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" width="25" height="25" valign="middle"> **GitHub** — [CloudRik](https://github.com/CloudRik)
+- <img src="https://github.com/user-attachments/assets/8c66fd5e-8d52-4803-b085-0f0273988fee" width="25" height="25" valign="middle"> **Arcade Points** — [arcadesuite.pages.dev](https://arcadesuite.pages.dev/)
+
+<br>
+
+---
+
+## ⚡ STEP-BY-STEP SOLUTION
+
+<br>
+
+### 🔹 STEP 1 — Run the automation script
+
+```bash
+curl -sSL "https://raw.githubusercontent.com/CloudRik/Challenge-Lab/main/Build%20Global%20and%20Regional%20Load%20Balancing%20Solutions%3A%20Challenge%20Lab/script2.sh" -o script2.sh && bash script2.sh
+```
+
+> ⚠️ **Note:** Jab prompt aaye, lab panel se **Region A** aur **Region B** daalna.
+
+<br>
+
+---
+
+
+
+<br>
+
+---
+
+### 🔹 STEP 2 — Task 3: Failover Test
+
+#### 2.1 — Find the Load Balancer IP
+
+```bash
+gcloud compute forwarding-rules describe rule-alb-global-https --global --format="value(IPAddress)"
+```
+
+#### 2.2 — Observe global distribution
+
+Copy the IP from Step 3.1 and replace `YOUR_LB_IP` below:
+
+```bash
+while true; do curl -k -s https://YOUR_LB_IP | grep "Hello from"; sleep 0.5; done
+```
+
+You should see responses **alternating between Region A and Region B**.
+
+Press **Ctrl+C** to stop.
+
+#### 2.3 — Simulate backend failure
+
+1. Open **GCP Console → Compute Engine → VM instances**
+2. Find the VM named **`mig-alb-api-a-xxxx`**
+3. Click the **SSH** button
+4. In the SSH terminal, run:
+
+```bash
+sudo systemctl stop nginx
+```
+
+#### 2.4 — Verify failover
+
+Run the curl loop again — you should now see **only Region B** responses:
+
+```bash
+while true; do curl -k -s https://YOUR_LB_IP | grep "Hello from"; sleep 0.5; done
+```
+
+#### 2.5 — Check Monitoring tab
+
+Go to **Network Services → Load Balancing** → click your LB → **Monitoring tab**.
+
+You should see:
+- **Region A** request line drops to **zero**
+- **Region B** request line spikes
+
+#### 2.6 — Click **Check my progress**
+
+Score → **100/100** ✅
+
+<br>
+
+---
+
+## ⚠️ Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `404 Not Found` on script download | URL me `%3A` (colon) aur `%20` (space) sahi check karo |
+| `already exists` error | Purane resources delete karo ya naya lab start karo |
+| `Permission denied on zone` | Zone galat hai — `gcloud compute zones list` se check karo |
+| Task 1 ka 2nd step (0/30) | `ip-internal-proxy` galat subnet me bana |
+| Task 1 ka 3rd step fail | `vm-client-internal` create nahi hua — subnet/zone check karo |
+
+<br>
+
+---
+
+## 🔗 Resources
+
+- 📘 [GCP Internal Proxy NLB Docs](https://cloud.google.com/load-balancing/docs/tcp/internal-proxy)
+- 📘 [GCP Global External ALB Docs](https://cloud.google.com/load-balancing/docs/https)
+- 📘 [GCP Backend Failover Docs](https://cloud.google.com/load-balancing/docs/backend-service#failover)
+
+<br>
+
+---
+
+<div align="center">
+
+### ⭐ Star this repo if it helped you!
+
+<img src="https://raw.githubusercontent.com/github/explore/main/topics/youtube/youtube.png" width="25" height="25" valign="middle"> **YouTube** — https://youtube.com/@imasis-k8x?si=lO3ixe-KbnN1nNBG
+
+<img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" width="25" height="25" valign="middle"> **GitHub** — https://github.com/CloudRik
+
+</div>
