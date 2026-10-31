@@ -1,332 +1,166 @@
 #!/bin/bash
-# ============================================================
-# Deploy Kubernetes Applications on Google Cloud: Challenge Lab
-# Automated Script - Multi-User Portable + Live Progress
-# ============================================================
+clear
 
-set -e
+# Define color variables
+BLACK=`tput setaf 0`
+RED=`tput setaf 1`
+GREEN=`tput setaf 2`
+YELLOW=`tput setaf 3`
+BLUE=`tput setaf 4`
+MAGENTA=`tput setaf 5`
+CYAN=`tput setaf 6`
+WHITE=`tput setaf 7`
 
-# ---------- HELPER FUNCTIONS ----------
-spinner() {
-  local pid=$1
-  local msg="${2:-Working...}"
-  local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  local i=0
-  while kill -0 $pid 2>/dev/null; do
-    i=$(( (i+1) % 10 ))
-    printf "\r${spin:$i:1}  ${msg}"
-    sleep 0.1
-  done
-  printf "\r✅ ${msg} - Done!          \n"
-}
+BG_BLACK=`tput setab 0`
+BG_RED=`tput setab 1`
+BG_GREEN=`tput setab 2`
+BG_YELLOW=`tput setab 3`
+BG_BLUE=`tput setab 4`
+BG_MAGENTA=`tput setab 5`
+BG_CYAN=`tput setab 6`
+BG_WHITE=`tput setab 7`
 
-countdown() {
-  local secs=$1
-  local msg="${2:-Waiting}"
-  while [ $secs -gt 0 ]; do
-    printf "\r⏳ ${msg}: ${secs}s remaining...   "
-    sleep 1
-    secs=$((secs-1))
-  done
-  printf "\r✅ ${msg} - Complete!          \n"
-}
+BOLD=`tput bold`
+RESET=`tput sgr0`
 
-progress_wait() {
-  local secs=$1
-  local msg="${2:-Processing}"
-  local elapsed=0
-  while [ $elapsed -lt $secs ]; do
-    printf "\r⏳ ${msg} (${elapsed}s / ${secs}s)..."
-    sleep 5
-    elapsed=$((elapsed+5))
-  done
-  printf "\r✅ ${msg} - Complete!          \n"
-}
+echo "${CYAN}${BOLD}=======================================================${RESET}"
+echo "${MAGENTA}${BOLD}               POWERED BY ARCADESUITE                  ${RESET}"
+echo "${CYAN}${BOLD}=======================================================${RESET}"
 
-# ---------- STEP 0: USER INPUTS ----------
-echo "=============================================="
-echo "  K8s Challenge Lab - Enter Your Details"
-echo "=============================================="
-echo ""
+#----------------------------------------------------start--------------------------------------------------#
 
-DETECTED_PROJECT=$(gcloud config get-value project 2>/dev/null)
-read -p "Enter Your Project ID [${DETECTED_PROJECT}]: " INPUT_PROJECT
-PROJECT_ID=${INPUT_PROJECT:-$DETECTED_PROJECT}
+echo "${YELLOW}${BOLD}Please provide the required details:${RESET}"
+echo
 
-read -p "Enter Your Region [europe-west4]: " INPUT_REGION
-REGION=${INPUT_REGION:-europe-west4}
+echo -n "${CYAN}${BOLD}Enter Repository Name (e.g., valkyrie-docker): ${RESET}"
+read REPO
+echo -n "${MAGENTA}${BOLD}Enter Docker Image Name (e.g., valkyrie-dev): ${RESET}"
+read DCKR_IMG
+echo -n "${YELLOW}${BOLD}Enter Tag Name (e.g., v0.0.2): ${RESET}"
+read TAG
+echo -n "${GREEN}${BOLD}Enter Zone (e.g., us-east1-d): ${RESET}"
+read ZONE
 
-read -p "Enter Your Zone [europe-west4-a]: " INPUT_ZONE
-ZONE=${INPUT_ZONE:-europe-west4-a}
+export REPO="$REPO"
+export DCKR_IMG="$DCKR_IMG"
+export TAG="$TAG"
+export ZONE="$ZONE"
 
-read -p "Enter Your Repository Name [valkyrie-repo]: " INPUT_REPO
-REPO_NAME=${INPUT_REPO:-valkyrie-repo}
+export PROJECT_ID=$(gcloud config get-value project)
+export REGION="${ZONE%-*}"
 
-read -p "Enter Your Docker Image Name [valkyrie-app]: " INPUT_IMAGE
-IMAGE_NAME=${INPUT_IMAGE:-valkyrie-app}
+echo
+echo "${GREEN}${BOLD}Starting Deployment Process...${RESET}"
+echo
 
-read -p "Enter Your Image Tag [v0.0.2]: " INPUT_TAG
-IMAGE_TAG=${INPUT_TAG:-v0.0.2}
+# Step 1: Sourcing setup script...
+echo "${MAGENTA}${BOLD}Sourcing setup script...${RESET}"
+source <(gsutil cat gs://cloud-training/gsp318/marking/setup_marking_v2.sh)
 
-read -p "Enter Your GKE Cluster Name [valkyrie-dev]: " INPUT_CLUSTER
-CLUSTER_NAME=${INPUT_CLUSTER:-valkyrie-dev}
-
-echo ""
-echo "=============================================="
-echo "📋 Summary:"
-echo "Project ID   : $PROJECT_ID"
-echo "Region       : $REGION"
-echo "Zone         : $ZONE"
-echo "Repo Name    : $REPO_NAME"
-echo "Image Name   : $IMAGE_NAME"
-echo "Image Tag    : $IMAGE_TAG"
-echo "Cluster Name : $CLUSTER_NAME"
-echo "=============================================="
-read -p "Proceed? (y/n): " CONFIRM
-if [ "$CONFIRM" != "y" ]; then
-  echo "❌ Cancelled"
-  exit 1
-fi
-
-# ---------- SETUP ----------
-echo ""
-echo "🔧 Setting up gcloud config..."
-gcloud config set project "$PROJECT_ID" 2>/dev/null
-gcloud config set compute/region "$REGION" 2>/dev/null
-gcloud config set compute/zone "$ZONE" 2>/dev/null
-echo "✅ Config set complete"
-
-# ============================================================
-# TASK 1: Create Docker image and store the Dockerfile (25 pts)
-# ============================================================
-echo ""
-echo "════════════════════════════════════════════"
-echo "  TASK 1: Docker Image & Dockerfile (25 pts)"
-echo "════════════════════════════════════════════"
-echo ""
-
-# Run lab's tracking script with spinner
-echo "🔧 Running lab tracking script (this sets up cluster in background)..."
-echo "⏳ This step takes 5-10 minutes. Please be patient!"
-echo ""
-
-(
-  source <(gcloud storage cat gs://spls/gsp318/script.sh) > /tmp/tracking.log 2>&1
-) &
-TRACKING_PID=$!
-
-# Show progress while waiting
-elapsed=0
-while kill -0 $TRACKING_PID 2>/dev/null; do
-  spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  i=$((elapsed % 10))
-  printf "\r${spin_chars:$i:1}  Tracking script running... (${elapsed}s elapsed)"
-  sleep 2
-  elapsed=$((elapsed+2))
-done
-wait $TRACKING_PID 2>/dev/null || true
-printf "\r✅ Tracking script complete! (${elapsed}s total)          \n"
-echo ""
-echo "📄 Last few lines of tracking log:"
-tail -5 /tmp/tracking.log 2>/dev/null || true
-
-# Download source code
-echo ""
-echo "📥 Downloading valkyrie-app source..."
-(
-  gcloud storage cp gs://spls/gsp318/valkyrie-app.tgz . > /tmp/dl.log 2>&1
-) &
-spinner $! "Downloading valkyrie-app.tgz"
-
-(
-  tar -xzf valkyrie-app.tgz
-) &
-spinner $! "Extracting source code"
-
+# Step 2: Downloading and extracting application...
+echo "${GREEN}${BOLD}Downloading and extracting application...${RESET}"
+gsutil cp gs://spls/gsp318/valkyrie-app.tgz .
+tar -xzf valkyrie-app.tgz
 cd valkyrie-app
-echo "✅ Source extracted to $(pwd)"
 
-# Create Dockerfile
-echo ""
-echo "📝 Creating Dockerfile..."
-cat > Dockerfile <<'EOF'
+# Step 3: Creating Dockerfile...
+echo "${YELLOW}${BOLD}Creating Dockerfile...${RESET}"
+cat > Dockerfile <<EOF
 FROM golang:1.10
 WORKDIR /go/src/app
 COPY source .
 RUN go install -v
-ENTRYPOINT ["app", "-single=true", "-port=8080"]
+ENTRYPOINT ["app","-single=true","-port=8080"]
 EOF
-echo "✅ Dockerfile created"
-echo ""
-echo "--- Dockerfile content ---"
-cat Dockerfile
-echo "--------------------------"
 
-# Build Docker image with spinner
-echo ""
-echo "🔨 Building Docker image ${IMAGE_NAME}:${IMAGE_TAG}..."
-echo "⏳ This takes 1-2 minutes..."
-docker build -t ${IMAGE_NAME}:${IMAGE_TAG} . > /tmp/docker-build.log 2>&1 &
-BUILD_PID=$!
+# Step 4: Building Docker image...
+echo "${BLUE}${BOLD}Building Docker image...${RESET}"
+docker build -t $DCKR_IMG:$TAG .
 
-elapsed=0
-while kill -0 $BUILD_PID 2>/dev/null; do
-  spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  i=$((elapsed % 10))
-  printf "\r${spin_chars:$i:1}  Docker build running... (${elapsed}s)"
-  sleep 2
-  elapsed=$((elapsed+2))
-done
-wait $BUILD_PID
-printf "\r✅ Docker image built! (${elapsed}s)          \n"
-echo ""
-echo "--- Build output (last 5 lines) ---"
-tail -5 /tmp/docker-build.log
+# Step 5: Executing Step 1 script...
+echo "${MAGENTA}${BOLD}Executing Step 1 script...${RESET}"
+cd ..
+./step1_v2.sh
 
-# Verify
-echo ""
-echo "🔍 Verifying Docker image..."
-docker images | grep ${IMAGE_NAME}
-echo ""
-echo "✅ TASK 1 COMPLETE - Lab panel mein Task 1 'Check my progress' click karo"
+# Step 6: Running Docker container...
+echo "${CYAN}${BOLD}Running Docker container...${RESET}"
+cd valkyrie-app
+docker run -d -p 8080:8080 $DCKR_IMG:$TAG
 
-# ============================================================
-# TASK 2: Test the created Docker image (no points, informational)
-# ============================================================
-echo ""
-echo "════════════════════════════════════════════"
-echo "  TASK 2: Test Docker Image"
-echo "════════════════════════════════════════════"
-echo ""
+# Step 7: Executing Step 2 script...
+echo "${MAGENTA}${BOLD}Executing Step 2 script...${RESET}"
+cd ..
+./step2_v2.sh
 
-echo "🚀 Running container in background (port 8080)..."
-docker run -d -p 8080:8080 ${IMAGE_NAME}:${IMAGE_TAG} > /dev/null 2>&1 || true
-echo "✅ Container started"
+cd valkyrie-app
 
-countdown 3 "Waiting for container to boot"
+# Step 8: Creating Artifact Repository...
+echo "${YELLOW}${BOLD}Creating Artifact Repository...${RESET}"
+gcloud artifacts repositories create $REPO \
+    --repository-format=docker \
+    --location=$REGION \
+    --description="awesome lab" \
+    --async
 
-echo ""
-echo "🔍 Testing container response..."
-curl -s http://localhost:8080 | head -10 || echo "Container running - use Web Preview to test"
+# Step 9: Configuring Docker authentication...
+echo "${BLUE}${BOLD}Configuring Docker authentication...${RESET}"
+gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
 
-echo ""
-echo "✅ TASK 2 COMPLETE"
+sleep 30
 
-# ============================================================
-# TASK 3: Push Docker image to Artifact Registry (25 pts)
-# ============================================================
-echo ""
-echo "════════════════════════════════════════════"
-echo "  TASK 3: Push to Artifact Registry (25 pts)"
-echo "════════════════════════════════════════════"
-echo ""
+# Step 10: Tagging and pushing Docker image...
+echo "${CYAN}${BOLD}Tagging and pushing Docker image...${RESET}"
 
-# Create Artifact Registry repo
-echo "📦 Creating Artifact Registry repository..."
-gcloud artifacts repositories create ${REPO_NAME} \
-  --repository-format=docker \
-  --location=${REGION} \
-  --description="Docker repository for valkyrie" \
-  --project=${PROJECT_ID} 2>/dev/null || echo "ℹ️  Repo exists, continuing..."
-echo "✅ Repository ready: ${REPO_NAME}"
+Image_ID=$(docker images --format='{{.ID}}' | head -n 1)
 
-# Configure Docker auth
-echo ""
-echo "🔐 Configuring Docker authentication..."
-gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
-echo "✅ Docker auth configured"
+docker tag $Image_ID $REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$DCKR_IMG:$TAG
 
-# Re-tag image
-echo ""
-echo "🏷️  Re-tagging image for Artifact Registry..."
-docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-  ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
-echo "✅ Image re-tagged"
+docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$DCKR_IMG:$TAG
 
-# Push with progress
-echo ""
-echo "⬆️  Pushing image to Artifact Registry..."
-echo "⏳ This takes 1-2 minutes..."
-docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG} > /tmp/docker-push.log 2>&1 &
-PUSH_PID=$!
+# Step 11: Updating Kubernetes deployment...
+echo "${GREEN}${BOLD}Updating Kubernetes deployment...${RESET}"
+sed -i s#IMAGE_HERE#$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$DCKR_IMG:$TAG#g k8s/deployment.yaml
 
-elapsed=0
-while kill -0 $PUSH_PID 2>/dev/null; do
-  spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  i=$((elapsed % 10))
-  printf "\r${spin_chars:$i:1}  Pushing to registry... (${elapsed}s)"
-  sleep 2
-  elapsed=$((elapsed+2))
-done
-wait $PUSH_PID
-printf "\r✅ Image pushed! (${elapsed}s)          \n"
-echo ""
-echo "--- Push output (last 5 lines) ---"
-tail -5 /tmp/docker-push.log
+# Step 12: Configuring Kubernetes cluster...
+echo "${YELLOW}${BOLD}Configuring Kubernetes cluster...${RESET}"
+gcloud container clusters get-credentials valkyrie-dev --zone $ZONE
+
+# Step 13: Deploying application to Kubernetes...
+echo "${BLUE}${BOLD}Deploying application to Kubernetes...${RESET}"
+kubectl create -f k8s/deployment.yaml
+kubectl create -f k8s/service.yaml
 
 echo ""
-echo "✅ TASK 3 COMPLETE - Lab panel mein Task 3 'Check my progress' click karo"
 
-# ============================================================
-# TASK 4: Create and expose deployment in Kubernetes (50 pts)
-# ============================================================
+# Final Banner
+echo "${GREEN}${BOLD}"
+cat << "EOF"
+  _____                      _      _       
+ / ____|                    | |    | |      
+| |     ___  _ __ ___  _ __ | | ___| |_ ___ 
+| |    / _ \| '_ ` _ \| '_ \| |/ _ \ __/ _ \
+| |___| (_) | | | | | | |_) | |  __/ ||  __/
+ \_____\___/|_| |_| |_| .__/|_|\___|\__\___|
+                      | |                    
+                      |_|                    
+EOF
+echo "${RESET}"
+echo "${MAGENTA}${BOLD}=======================================================${RESET}"
+echo "${CYAN}${BOLD}               POWERED BY ARCADESUITE                  ${RESET}"
+echo "${MAGENTA}${BOLD}=======================================================${RESET}"
+echo "${GREEN}${BOLD}             LAB COMPLETED SUCCESSFULLY!               ${RESET}"
+echo "${MAGENTA}${BOLD}=======================================================${RESET}"
 echo ""
-echo "════════════════════════════════════════════"
-echo "  TASK 4: Deploy to Kubernetes (50 pts)"
-echo "════════════════════════════════════════════"
-echo ""
 
-cd ~/valkyrie-app
-
-# Get K8s credentials
-echo "🔑 Getting GKE credentials for cluster ${CLUSTER_NAME}..."
-gcloud container clusters get-credentials ${CLUSTER_NAME} \
-  --zone=${ZONE} \
-  --project=${PROJECT_ID} > /dev/null 2>&1 &
-spinner $! "Fetching GKE credentials"
-echo "✅ Credentials fetched"
-
-# Update deployment.yaml
-echo ""
-echo "📝 Updating deployment.yaml with correct image path..."
-if [ -f "k8s/deployment.yaml" ]; then
-  sed -i "s|LOCATION-docker.pkg.dev/PROJECT-ID/REPOSITORY/IMAGE|${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}|g" k8s/deployment.yaml
-  sed -i "s|IMAGE|${IMAGE_NAME}|g" k8s/deployment.yaml
-  sed -i "s|TAG|${IMAGE_TAG}|g" k8s/deployment.yaml
-
-  echo "--- deployment.yaml preview ---"
-  cat k8s/deployment.yaml
-  echo "-------------------------------"
-else
-  echo "⚠️  k8s/deployment.yaml not found"
-fi
-
-# Apply deployments
-echo ""
-echo "🚀 Applying Kubernetes deployments..."
-kubectl apply -f k8s/deployment.yaml > /dev/null 2>&1 &
-spinner $! "Applying deployment.yaml"
-
-kubectl apply -f k8s/service.yaml > /dev/null 2>&1 &
-spinner $! "Applying service.yaml"
-echo "✅ Deployments applied"
-
-# Wait for external IP with countdown
-echo ""
-countdown 30 "Waiting for external IP assignment"
-
-echo ""
-echo "🔍 Checking pods..."
-kubectl get pods
-
-echo ""
-echo "🔍 Checking services..."
-kubectl get services
-
-echo ""
-echo "=============================================="
-echo "✅ ALL TASKS COMPLETE!"
-echo "=============================================="
-echo "1. Lab panel mein saare 'Check my progress' click karo"
-echo "2. Web Preview se valkyrie-dev service check karo"
-echo "=============================================="
+cd ~
+remove_files() {
+    for file in *; do
+        if [[ "$file" == gsp* || "$file" == arc* || "$file" == shell* ]]; then
+            if [[ -f "$file" ]]; then
+                rm "$file"
+                echo "File removed: $file"
+            fi
+        fi
+    done
+}
+remove_files
